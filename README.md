@@ -1,4 +1,4 @@
-# JKBuddy 智能问数系统
+# JKBuddy 智能业务伙伴系统
 
 基于 **LibreChat** 框架 + **MCP（Model Context Protocol）** 构建的金控集团智能投资问数系统。
 
