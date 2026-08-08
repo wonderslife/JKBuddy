@@ -1,0 +1,30 @@
+# 统一行尾与二进制声明
+* text=auto
+
+# 源码统一 LF
+*.js text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.py text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+
+# 二进制 / 运行时数据（不应入库）
+*.rdb binary
+*.pem binary
+*.key binary
+*.crt binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary

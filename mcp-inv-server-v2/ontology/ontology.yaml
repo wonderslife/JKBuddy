@@ -1,0 +1,331 @@
+# ontology.yaml - 投资数据 DWD 本体定义文件（单一事实源 SSOT）
+# -----------------------------------------------------------------------------
+# 路径    : mcp-inv-server-v2/ontology/ontology.yaml
+# 权威级别 : 运行期（Phase 2）。MCP 启动/首次导入时自动加载本文件，
+#            生成机读投影（base.py 运行时白名单）与人读投影（SKILL 语义段）。
+# 变更铁律 : 只允许修改本文件。任何字段/规则/关系变更先改此处，重启 MCP 即生效；
+#            由 scripts/check_ontology_sync.py 校验本体合法 + SKILL 语义段零漂移。
+# 禁止事项 : ① 禁止手工维护 base.py / SKILL 中的投影副本（进本体统一管理）；
+#            ② 禁止把行为规则（输出/去重/分页等）写入本文件 rules 段。
+# -----------------------------------------------------------------------------
+version: "1.0"
+
+# =============================================================================
+# 一、对象类型定义（独立实体视图）
+#    每个对象类型对应一个 DWD 实体视图，primary_key 为视图唯一键。
+# =============================================================================
+object_types:
+  Fund:
+    source_view: dwd_fund
+    primary_key: fund_id
+    label: 基金基本情况
+    properties:
+      - {name: fund_id,       type: string,  desc: "基金在系统中唯一编号"}
+      - {name: fund_name,     type: string,  desc: "基金名称"}
+      - {name: fund_type,     type: string,  desc: "基金类型"}
+      - {name: fund_phase,    type: string,  desc: "基金阶段"}
+      - {name: dept_id,       type: string,  desc: "基金所属业务部门编号"}
+      - {name: company_name,  type: string,  desc: "基金所属的金控公司"}
+      - {name: cap_date,      type: datetime, desc: "基金成立备案日期"}
+      - {name: total_size,    type: decimal, unit: 万元, desc: "基金规模"}
+      - {name: invest_amount, type: decimal, unit: 万元, desc: "投资金额"}
+      - {name: exit_amount,   type: decimal, unit: 万元, desc: "退出金额"}
+      - {name: subscribed_amt, type: decimal, unit: 万元, desc: "认缴金额"}
+
+  Subfund:
+    source_view: dwd_subfund
+    primary_key: subfund_id
+    label: 子基金基本情况
+    properties:
+      - {name: subfund_id,    type: string,  desc: "子基金在系统唯一编号"}
+      - {name: subfund_name,  type: string,  desc: "子基金名称"}
+      - {name: subfund_type,  type: string,  desc: "子基金类型"}
+      - {name: phase,         type: string,  desc: "子基金阶段"}
+      - {name: dept_id,       type: string,  desc: "业务部门编号"}
+      - {name: company_name,  type: string,  desc: "子基金所属的金控公司"}
+      - {name: in_date,       type: datetime, desc: "进入子基金的日期"}
+      - {name: total_size,    type: decimal, unit: 万元, desc: "基金规模"}
+      - {name: invest_amount, type: decimal, unit: 万元, desc: "投资金额"}
+      - {name: exit_amount,   type: decimal, unit: 万元, desc: "退出金额"}
+
+  Project:
+    source_view: dwd_project
+    primary_key: proj_id
+    label: 项目基本情况
+    properties:
+      - {name: proj_id,       type: string,  desc: "项目在系统唯一编号"}
+      - {name: proj_name,     type: string,  desc: "项目名称"}
+      - {name: phase,         type: string,  desc: "项目阶段"}
+      - {name: dept_id,       type: string,  desc: "业务部门编号"}
+      - {name: company_name,  type: string,  desc: "项目所属金控公司"}
+      - {name: biz_line,      type: string,  desc: "业务线（中文值，如 股权项目/融资租赁）"}
+      - {name: deal_stage,    type: string,  desc: "交易阶段"}
+      - {name: stage_status,  type: string,  desc: "阶段状态"}
+      - {name: in_date,       type: datetime, desc: "进入日期"}
+      - {name: invest_amount, type: decimal, unit: 万元, desc: "投资金额"}
+      - {name: exit_amount,   type: decimal, unit: 万元, desc: "退出金额"}
+      # trade_names 出现在 DEFAULT_FIELDS 中，但不在 ANYWHERE 过滤白名单（见 security.dwd_project）
+
+  SubfundProject:
+    source_view: dwd_subfund_proj
+    primary_key: subfund_proj_id
+    label: 子基金投资的项目
+    properties:
+      - {name: subfund_proj_id,   type: string,  desc: "子基金底层项目唯一编号"}
+      - {name: subfund_id,        type: string,  desc: "所属子基金编号"}
+      - {name: subfund_name,      type: string,  desc: "所属子基金名称"}
+      - {name: subfund_proj_name, type: string,  desc: "底层项目名称"}
+      - {name: dept_id,           type: string,  desc: "管理项目的公司编号"}
+      - {name: company_name,      type: string,  desc: "管理项目的公司，如某控股公司管理的这个字段内容为某控股公司"}
+      - {name: time_value,        type: string,  desc: "时间值（字符串型，不适合范围查询）"}
+
+  LP:
+    source_view: dwd_lp2fund
+    primary_key: lp_id
+    label: 出资人基本情况
+    properties:
+      - {name: lp_id,        type: string,  desc: "出资人编号"}
+      - {name: lp_name,      type: string,  desc: "出资人名称"}
+      - {name: lp_type,      type: string,  desc: "出资人类型"}
+      - {name: fund_id,      type: string,  desc: "被投资基金编号"}
+      - {name: fund_name,    type: string,  desc: "被投资基金名称"}
+      - {name: cap_date,     type: datetime, desc: "基金成立备案日期"}
+      - {name: flow_time,    type: datetime, desc: "出资流水时间"}
+      - {name: committed_amt, type: decimal, unit: 万元, desc: "承诺出资额（认缴）"}
+      - {name: flow_amt,     type: decimal, unit: 万元, desc: "实际出资额"}
+      - {name: ownership_pct, type: decimal, desc: "出资占比%"}
+
+# =============================================================================
+# 二、关系类型定义
+#    描述"投资方 → 被投资方"的投资关系。source_view 为承载该关系的跨域视图。
+# =============================================================================
+link_types:
+  INVESTS_IN:
+    source_view: dwd_all_biz
+    source_object: [Fund, Subfund, LP]        # 投资方
+    target_object: [Project, SubfundProject, Subfund, Fund]  # 被投资方
+    subtypes: [FUND2PROJ, SUBFUND2PROJ, FUND2SUBFUND, LP2FUND]
+    label: 全部投资关系（包含基金投资项目、子基金投资项目、基金投资子基金、出资人投资基金）
+    properties:
+      - {name: biz_type,      type: string,  desc: "业务类型（biz_type），4 种互斥"}
+      - {name: investor_id,   type: string,  desc: "投资人系统唯一编号（基金/子基金/LP）"}
+      - {name: investor_name, type: string,  desc: "投资人名称"}
+      - {name: investee_id,   type: string,  desc: "被投资人系统唯一编号"}
+      - {name: investee_name, type: string,  desc: "被投资人名称，如果业务类型是FUND2PROJ和SUBFUND2PROJ则为项目名称，如果是FUND2SUBFUND、LP2FUND则为子基金名称"}
+      - {name: company_name,  type: string,  desc: "管理项目的公司，如某控股公司管理项目或基金时的这个字段内容为某控股公司"}
+      - {name: committed_amt, type: decimal, unit: 万元, desc: "承诺出资额"}
+      - {name: flow_amt,      type: decimal, unit: 万元, desc: "实际出资额"}
+      - {name: flow_time,     type: datetime, desc: "出资流水时间"}
+      - {name: biz_line,      type: string,  desc: "业务线（按 biz_type 取值）"}
+
+  FUND2SUBFUND:
+    source_view: dwd_fund2subfund
+    source_object: [Fund]
+    target_object: [Subfund]
+    label: 母基金投子基金
+    properties:
+      - {name: fund_id,       type: string,   desc: "母基金编号"}
+      - {name: fund_name,     type: string,   desc: "母基金名称"}
+      - {name: subfund_id,    type: string,   desc: "子基金编号"}
+      - {name: subfund_name,  type: string,   desc: "子基金名称"}
+      - {name: cap_date,      type: datetime, desc: "成立/备案日期"}
+      - {name: flow_time,     type: datetime, desc: "出资流水时间"}
+      - {name: committed_amt, type: decimal, unit: 万元, desc: "承诺出资额"}
+      - {name: flow_amt,      type: decimal, unit: 万元, desc: "实际出资额"}
+      - {name: ownership_pct, type: decimal, desc: "出资占比%"}
+
+  FUND2PROJ:
+    source_view: dwd_fund2proj
+    source_object: [Fund]
+    target_object: [Project]
+    label: 基金投项目
+    properties:
+      - {name: fund_id,       type: string,   desc: "基金编号"}
+      - {name: fund_name,     type: string,   desc: "基金名称"}
+      - {name: proj_id,       type: string,   desc: "项目编号"}
+      - {name: proj_name,     type: string,   desc: "项目名称"}
+      - {name: biz_line,      type: string,   desc: "业务线（英文代码，如 stock/debt/rzzl/bl/elo）"}
+      - {name: cap_date,      type: datetime, desc: "成立/备案日期"}
+      - {name: flow_time,     type: datetime, desc: "出资流水时间"}
+      - {name: committed_amt, type: decimal, unit: 万元, desc: "承诺出资额"}
+      - {name: flow_amt,      type: decimal, unit: 万元, desc: "实际出资额"}
+      - {name: ownership_pct, type: decimal, desc: "出资占比%"}
+
+  SUBFUND2PROJ:
+    source_view: dwd_subfund2proj
+    source_object: [Subfund]
+    target_object: [SubfundProject]
+    label: 子基金投项目
+    properties:
+      - {name: subfund_id,        type: string,   desc: "子基金编号"}
+      - {name: subfund_name,      type: string,   desc: "子基金名称"}
+      - {name: subfund_proj_id,   type: string,   desc: "底层项目编号"}
+      - {name: subfund_proj_name, type: string,   desc: "底层项目名称"}
+      - {name: cap_date,          type: datetime, desc: "成立/备案日期"}
+      - {name: flow_time,         type: datetime, desc: "出资流水时间"}
+      - {name: committed_amt,     type: decimal, unit: 万元, desc: "承诺出资额"}
+      - {name: flow_amt,          type: decimal, unit: 万元, desc: "实际出资额"}
+      - {name: ownership_pct,     type: decimal, desc: "出资占比%"}
+
+  LP2FUND:
+    source_view: dwd_lp2fund
+    source_object: [LP]
+    target_object: [Fund]
+    label: LP 出资基金
+    properties:
+      - {name: lp_id,         type: string,   desc: "出资人编号"}
+      - {name: lp_name,       type: string,   desc: "出资人名称"}
+      - {name: lp_type,       type: string,   desc: "出资人类型"}
+      - {name: fund_id,       type: string,   desc: "基金编号"}
+      - {name: fund_name,     type: string,   desc: "基金名称"}
+      - {name: cap_date,      type: datetime, desc: "成立/备案日期"}
+      - {name: flow_time,     type: datetime, desc: "出资流水时间"}
+      - {name: committed_amt, type: decimal, unit: 万元, desc: "承诺出资额"}
+      - {name: flow_amt,      type: decimal, unit: 万元, desc: "实际出资额"}
+      - {name: ownership_pct, type: decimal, desc: "出资占比%"}
+
+# =============================================================================
+# 三、业务规则定义
+#    仅承载"语义/口径"类规则；禁止写入输出行为规则（去重/过滤/分页等）。
+# =============================================================================
+rules:
+  - id: R-COMPANY-ATTRIBUTION
+    scope: INVESTS_IN
+    desc: "投资归属规则"
+    definition: "投资方实体所属的金控公司；LP2FUND 回退为被投资方（基金）的 LP 为外部方，无金控公司）"
+
+  - id: R-NO-CROSS-BIZLINE-SUM
+    scope: INVESTS_IN
+    desc: "禁止跨业务线直接加总金额"
+    definition: "不同 biz_line 的金额语义不同，禁止跨 biz_line 直接 SUM；应使用 stat_investment_summary 按 biz_line 分组统计"
+    enforce_in: [stat_investment_summary]
+
+  - id: R-ALL-BIZ-MACRO-ONLY
+    scope: INVESTS_IN
+    desc: "dwd_all_biz 用于数据统计，"
+    definition: "query_all_biz 用于全集团跨域数据统计，可以查询特定项目或基金列表，查询不到再使用专表工具"
+
+  - id: R-COMMITTED-AMT-SCOPE
+    scope: INVESTS_IN
+    desc: "committed_amt 有效范围"
+    definition: "committed_amt 仅在 biz_line 为 FUND（FUND2SUBFUND）和 LP（LP2FUND）时有业务意义；项目类（stock/rzzl/debt/bl/elo）不得以 committed_amt 作为投资额口径，应使用 flow_amt"
+
+  - id: R-AMOUNT-UNIT
+    scope: GLOBAL
+    desc: "金额单位"
+    definition: "所有金额字段单位统一为万元"
+
+# =============================================================================
+# 四、安全约束（生成 base.py 白名单的唯一依据）
+#    每个视图定义八个白名单维度 + 稳定排序字段 + 默认返回字段。
+#    注：DEFAULT_FIELDS 可能包含非过滤字段（如 dwd_project.trade_names），
+#        该字段仅用于 SELECT 返回，不得进入 allowed_fields。
+# =============================================================================
+security:
+  dwd_fund:
+    allowed_fields: [fund_id, fund_name, fund_type, fund_phase, dept_id, company_name, cap_date, invest_amount, exit_amount, subscribed_amt, total_size]
+    date_range_fields: [cap_date]
+    amount_range_fields: [invest_amount, exit_amount, subscribed_amt, total_size]
+    group_by_fields: [fund_type, fund_phase, company_name, dept_id]
+    agg_fields: [total_size, invest_amount, exit_amount, subscribed_amt]
+    null_check_fields: [cap_date, invest_amount, exit_amount]
+    prefix_match_fields: [fund_name, company_name]
+    group_by_exprs: ["YEAR(cap_date)", "MONTH(cap_date)"]
+    stable_order_field: fund_id
+    default_fields: [fund_id, fund_name, fund_type, fund_phase, total_size, invest_amount, exit_amount, company_name, cap_date]
+
+  dwd_subfund:
+    allowed_fields: [subfund_id, subfund_name, subfund_type, phase, dept_id, company_name, in_date, invest_amount, exit_amount, total_size]
+    date_range_fields: [in_date]
+    amount_range_fields: [invest_amount, exit_amount, total_size]
+    group_by_fields: [subfund_type, phase, company_name, dept_id]
+    agg_fields: [total_size, invest_amount, exit_amount]
+    null_check_fields: [invest_amount, exit_amount]
+    prefix_match_fields: [subfund_name, company_name]
+    group_by_exprs: ["YEAR(in_date)", "MONTH(in_date)"]
+    stable_order_field: subfund_id
+    default_fields: [subfund_id, subfund_name, subfund_type, phase, total_size, invest_amount, exit_amount, company_name]
+
+  dwd_project:
+    allowed_fields: [proj_id, proj_name, phase, dept_id, company_name, biz_line, deal_stage, stage_status, in_date, invest_amount, exit_amount]
+    date_range_fields: [in_date]
+    amount_range_fields: [invest_amount, exit_amount]
+    group_by_fields: [biz_line, phase, company_name, dept_id, deal_stage]
+    agg_fields: [invest_amount, exit_amount]
+    null_check_fields: [invest_amount, exit_amount]
+    prefix_match_fields: [proj_name, company_name]
+    group_by_exprs: ["YEAR(in_date)", "MONTH(in_date)"]
+    stable_order_field: proj_id
+    default_fields: [proj_id, proj_name, phase, biz_line, invest_amount, exit_amount, company_name, deal_stage, trade_names]
+
+  dwd_subfund_proj:
+    allowed_fields: [subfund_proj_id, subfund_id, subfund_name, subfund_proj_name, dept_id, company_name, time_value]
+    date_range_fields: []
+    amount_range_fields: []
+    group_by_fields: [subfund_id, subfund_name, company_name, dept_id]
+    agg_fields: []
+    null_check_fields: [time_value]
+    prefix_match_fields: [subfund_name, subfund_proj_name, company_name]
+    group_by_exprs: ["YEAR(time_value)", "MONTH(time_value)"]
+    stable_order_field: subfund_proj_id
+    default_fields: [subfund_proj_id, subfund_id, subfund_name, subfund_proj_name, company_name, time_value]
+
+  dwd_lp2fund:
+    allowed_fields: [lp_id, lp_name, lp_type, fund_id, fund_name, cap_date, flow_time, committed_amt, flow_amt, ownership_pct]
+    date_range_fields: [cap_date, flow_time]
+    amount_range_fields: [committed_amt]
+    group_by_fields: [lp_type, fund_id, fund_name, lp_id, lp_name]
+    agg_fields: [committed_amt, flow_amt]
+    null_check_fields: [committed_amt, flow_amt, ownership_pct]
+    prefix_match_fields: [lp_name, fund_name]
+    group_by_exprs: ["YEAR(cap_date)", "YEAR(flow_time)"]
+    stable_order_field: lp_id
+    default_fields: [lp_id, lp_name, lp_type, fund_id, fund_name, committed_amt, flow_amt, flow_time, ownership_pct]
+
+  dwd_fund2subfund:
+    allowed_fields: [fund_id, fund_name, subfund_id, subfund_name, cap_date, flow_time, committed_amt, flow_amt, ownership_pct]
+    date_range_fields: [cap_date, flow_time]
+    amount_range_fields: [committed_amt]
+    group_by_fields: [fund_id, fund_name, subfund_id, subfund_name]
+    agg_fields: [committed_amt, flow_amt]
+    null_check_fields: [committed_amt, flow_amt, ownership_pct]
+    prefix_match_fields: [fund_name, subfund_name]
+    group_by_exprs: ["YEAR(cap_date)", "YEAR(flow_time)"]
+    stable_order_field: fund_id
+    default_fields: [fund_id, fund_name, subfund_id, subfund_name, committed_amt, flow_amt, flow_time, ownership_pct]
+
+  dwd_fund2proj:
+    allowed_fields: [fund_id, fund_name, proj_id, proj_name, biz_line, cap_date, flow_time, committed_amt, flow_amt, ownership_pct]
+    date_range_fields: [cap_date, flow_time]
+    amount_range_fields: [committed_amt]
+    group_by_fields: [fund_id, fund_name, proj_id, proj_name, biz_line]
+    agg_fields: [committed_amt, flow_amt]
+    null_check_fields: [committed_amt, flow_amt, ownership_pct]
+    prefix_match_fields: [fund_name, proj_name]
+    group_by_exprs: ["YEAR(cap_date)", "YEAR(flow_time)"]
+    stable_order_field: fund_id
+    default_fields: [fund_id, fund_name, proj_id, proj_name, biz_line, committed_amt, flow_amt, flow_time, ownership_pct]
+
+  dwd_subfund2proj:
+    allowed_fields: [subfund_id, subfund_name, subfund_proj_id, subfund_proj_name, cap_date, flow_time, committed_amt, flow_amt, ownership_pct]
+    date_range_fields: [cap_date, flow_time]
+    amount_range_fields: [committed_amt]
+    group_by_fields: [subfund_id, subfund_name, subfund_proj_id, subfund_proj_name]
+    agg_fields: [committed_amt, flow_amt]
+    null_check_fields: [committed_amt, flow_amt, ownership_pct]
+    prefix_match_fields: [subfund_name, subfund_proj_name]
+    group_by_exprs: ["YEAR(cap_date)", "YEAR(flow_time)"]
+    stable_order_field: subfund_id
+    default_fields: [subfund_id, subfund_name, subfund_proj_id, subfund_proj_name, committed_amt, flow_amt, flow_time, ownership_pct]
+
+  dwd_all_biz:
+    allowed_fields: [biz_type, investor_id, investor_name, investee_id, investee_name, biz_line, company_name, flow_time, committed_amt, flow_amt]
+    date_range_fields: [flow_time]
+    amount_range_fields: [committed_amt, flow_amt]
+    group_by_fields: [biz_type, biz_line, investor_name, investee_name, company_name]
+    agg_fields: [committed_amt, flow_amt]
+    null_check_fields: [committed_amt, flow_amt]
+    prefix_match_fields: [investor_name, investee_name, company_name]
+    group_by_exprs: ["YEAR(flow_time)", "MONTH(flow_time)"]
+    stable_order_field: biz_type
+    default_fields: [biz_type, investor_id, investor_name, investee_id, investee_name, biz_line, company_name, committed_amt, flow_amt, flow_time]
