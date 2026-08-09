@@ -19,7 +19,7 @@
 |------|------|-----------|
 | 用户画像 | 金控集团领导 / 业务部门员工 / 外部监管审计（3 类） | 角色差异化需求 |
 | Agent 组织 | 3 个 A1 共享 1 个 A2 | 配置维护成本 vs 隔离性 |
-| 澄清策略 | 多轮对话澄清 + recursion_limit=3 硬性限制 | Gemma4 重复提问缺陷 |
+| 澄清策略 | 多轮对话澄清 + recursion_limit=3 硬性限制 | qwen3.6-35B 重复提问缺陷 |
 | 工具权限 | A2 全挂 10 个工具 | 误用风险 vs 配置复杂度 |
 | 上线节奏 | 逐套上线（先领导版 → 员工版 → 审计版） | MVP 风险控制 |
 | MVP 能力 | 仅基础查询 + 表格输出 | 范围控制 |
@@ -42,17 +42,17 @@
 
 | 维度 | 现状 | 来源 |
 |------|------|------|
-| MCP 服务 | mcp-inv-server-v2，10 个查询工具覆盖 9 个 DWD 视图 | [mcp-inv-server-v2](file:///my-project/mcp-inv-server-v2) |
-| LibreChat Endpoint | Gemma-4-Local（gemma-4-26B-A4B-it） | [librechat.yaml:528](file:///LibreChat/librechat.yaml#L528) |
-| MCP 服务地址 | `http://<server-host>:8080/mcp` | [librechat.yaml:347](file:///LibreChat/librechat.yaml#L347) |
-| Agent 编排能力 | 原生支持 Chain / Handoff / Subagents | [AgentChain.tsx](file:///LibreChat/client/src/components/SidePanel/Agents/Advanced/AgentChain.tsx) |
-| Gemma4 已知缺陷 | 重复调用工具、重复提问 | project_memory.md "Lessons Learned" |
-| 数据库 | your_db_name @ <db-host> | 已部署验证 |
+| MCP 服务 | mcp-inv-server-v2，10 个查询工具覆盖 9 个 DWD 视图 | [mcp-inv-server-v2](mcp-inv-server-v2) |
+| LibreChat Endpoint | Qwen-3.6-Local（qwen3.6-35B） | [librechat.yaml:528](librechat/librechat.yaml#L528) |
+| MCP 服务地址 | `http://10.0.0.5:8080/mcp` | [librechat.yaml:347](librechat/librechat.yaml#L347) |
+| Agent 编排能力 | 原生支持 Chain / Handoff / Subagents | [AgentChain.tsx](librechat/client/src/components/SidePanel/Agents/Advanced/AgentChain.tsx) |
+| 模型需验证点 | 工具调用稳定性、重复调用/提问 | project_memory.md "Lessons Learned" |
+| 数据库 | <db-name> @ 172.16.0.1 | 已部署验证 |
 
 ### 1.3 设计目标
 
 1. **平台原生**：使用 LibreChat 原生能力，零后端开发
-2. **模型适配**：规避 Gemma4 已知缺陷
+2. **模型适配**：规避 qwen3.6-35B 已知缺陷
 3. **角色差异化**：3 类用户获得针对性体验
 4. **渐进落地**：MVP 先上领导版，逐套扩展
 5. **可监控**：关键指标可度量，为优化提供数据
@@ -68,7 +68,7 @@
 | 轮次 | 主题 | 问题数 | 关键决策 |
 |------|------|--------|---------|
 | 第一轮 | 业务范围与画像 | 4 | 用户画像、澄清策略、工具权限、高级能力 |
-| 第二轮 | 矛盾化解 | 4 | Gemma4 缺陷处理、角色组织、跨域实现、导出能力 |
+| 第二轮 | 矛盾化解 | 4 | qwen3.6-35B 缺陷处理、角色组织、跨域实现、导出能力 |
 | 第三轮 | 实施细节 | 4 | Agent 组织、MVP 范围、审计日志、上线节奏 |
 
 ### 2.2 核心矛盾与化解
@@ -77,7 +77,7 @@
 
 | 矛盾 | 用户选择 | 化解方案 |
 |------|---------|---------|
-| 多轮澄清 vs Gemma4 重复提问缺陷 | 多轮澄清 | recursion_limit=3 硬性限制 |
+| 多轮澄清 vs qwen3.6-35B 重复提问缺陷 | 多轮澄清 | recursion_limit=3 硬性限制 |
 | 3 类用户差异 vs 单一 Agent 能力 | 按角色创建多套 | 3 个 A1 + 1 个共享 A2 |
 | 跨域关联 vs 多工具组合风险 | 依赖现有聚合视图 | dwd_all_biz + stat_investment_summary |
 | 数据导出 vs MCP 能力边界 | MVP 不做 | 二期评估 |
@@ -118,7 +118,7 @@
                          ▼
             ┌────────────────────────────┐
             │   mcp-inv-server-v2        │
-            │   http://<server-host>:8080    │
+            │   http://10.0.0.5:8080    │
             │   9 个 DWD 视图            │
             └────────────────────────────┘
 ```
@@ -127,8 +127,8 @@
 
 | 原则 | 说明 | 化解的风险 |
 |------|------|-----------|
-| A1 不挂工具 | `tools=[]` | 从源头规避 Gemma4 重复调用工具 |
-| recursion_limit=3 | 硬性限制澄清轮数 | 化解 Gemma4 重复提问 |
+| A1 不挂工具 | `tools=[]` | 从源头规避 qwen3.6-35B 重复调用工具 |
+| recursion_limit=3 | 硬性限制澄清轮数 | 化解 qwen3.6-35B 重复提问 |
 | end_after_tools=true | A2 工具调用后立即结束 | 双保险防重 |
 | 共享 A2 | 3 套 A1 共用 1 个 A2 | 降低维护成本 |
 | 角色感知 | A2 通过 Chain 上下文识别角色 | 差异化输出 |
@@ -152,8 +152,8 @@
 | 字段 | 配置值 | 说明 |
 |------|--------|------|
 | name | `投资意图路由器-领导版` | |
-| model | `gemma-4-26B-A4B-it` | |
-| endpoint | `Gemma-4-Local` | [librechat.yaml:528](file:///LibreChat/librechat.yaml#L528) |
+| model | `qwen3.6-35B` | |
+| endpoint | `Qwen-3.6-Local` | [librechat.yaml:528](librechat/librechat.yaml#L528) |
 | tools | `[]` | **关键防重设计：不挂任何工具** |
 | recursion_limit | `3` | 硬性限制澄清轮数 |
 | instructions | 见 §5.1 | 针对领导场景优化 |
@@ -179,8 +179,8 @@
 | 字段 | 配置值 | 说明 |
 |------|--------|------|
 | name | `投资数据执行器` | |
-| model | `gemma-4-26B-A4B-it` | |
-| endpoint | `Gemma-4-Local` | |
+| model | `qwen3.6-35B` | |
+| endpoint | `Qwen-3.6-Local` | |
 | tools | 10 个 MCP 工具全挂载 | query_fund, query_subfund, query_project, query_subfund_proj, query_lp2fund, query_fund2subfund, query_fund2proj, query_subfund2proj, stat_group_by_tool, stat_investment_summary |
 | end_after_tools | `true` | **工具调用后立即结束，防止重复调用** |
 | instructions | 见 §5.2 | 角色感知 + 防重规则 |
@@ -362,14 +362,14 @@
 [用户角色] 员工
 ```
 
-**用户回答**："B，某金控集团的"
+**用户回答**："B，某金控公司的"
 
 **A1-员工版第二轮**（recursion 内）：
 ```
 [意图分类] Subfund_Query
 [置信度]   0.9
 [关键参数]
-- company_name: 金控集团
+- company_name: 某金控公司
 - limit: 20
 [需要澄清] 否
 [假设说明] 默认 limit=20
@@ -410,8 +410,8 @@
 | A1 输出格式不规范 | A2 Prompt 容错：识别 `[意图分类]` 标签失败时回退为通用查询 | "无法识别查询意图，已执行通用查询" |
 | A2 工具调用失败（401/403） | A2 输出错误提示 + 建议联系管理员，不重试 | "认证失败，请联系管理员" |
 | A2 工具返回空数据 | A2 输出"未找到匹配数据"+ 建议调整参数 | "未找到匹配数据，建议调整条件" |
-| Gemma4 重复调用工具 | `end_after_tools=true` + Prompt 双保险 | 用户无感知（后台拦截） |
-| Gemma4 重复提问 | `recursion_limit=3` 硬性限制 | 最多 3 轮澄清后强制执行 |
+| qwen3.6-35B 重复调用工具 | `end_after_tools=true` + Prompt 双保险 | 用户无感知（后台拦截） |
+| qwen3.6-35B 重复提问 | `recursion_limit=3` 硬性限制 | 最多 3 轮澄清后强制执行 |
 | Chain 传递中断 | LibreChat 自动报错 | "Agent 链执行失败，请重试" |
 | MCP 服务不可达 | A2 输出"服务暂不可用"+ 不重试 | "服务暂不可用，请稍后重试" |
 | 参数缺失 | A2 直接报错 | "缺少必填参数：biz_line" |
@@ -536,8 +536,8 @@
 
 | 风险 ID | 风险描述 | 影响 | 概率 | 缓解措施 |
 |---------|---------|------|------|---------|
-| R1 | Gemma4 在 A2 阶段重复调用同一工具 | 响应延迟、资源浪费 | 高 | `end_after_tools=true` + Prompt 显式禁止 + 用户监督 |
-| R2 | Gemma4 在 A1 阶段重复提问 | 用户体验下降 | 高 | `recursion_limit=3` + Prompt 强制"同一参数最多提问一次" |
+| R1 | qwen3.6-35B 在 A2 阶段重复调用同一工具 | 响应延迟、资源浪费 | 高 | `end_after_tools=true` + Prompt 显式禁止 + 用户监督 |
+| R2 | qwen3.6-35B 在 A1 阶段重复提问 | 用户体验下降 | 高 | `recursion_limit=3` + Prompt 强制"同一参数最多提问一次" |
 | R3 | A1 输出格式不规范导致 A2 无法识别 | A2 执行失败 | 中 | A1 Prompt 给出严格格式示例 + A2 Prompt 容错处理 |
 | R4 | Chain 传递上下文过长导致性能下降 | 响应超时 | 低 | 设置 `recursion_limit` + A2 Prompt 聚焦关键信息 |
 | R5 | MCP 服务认证失败（401/403） | A2 工具调用失败 | 低 | 参见 project_memory.md 的认证配置规范 |
@@ -572,7 +572,7 @@
 1. **A3 后处理 Agent**：支持趋势分析、图表生成
 2. **跨域关联分析**：基于 dwd_all_biz 视图实现 LP→基金→项目穿透
 3. **数据导出能力**：MCP 新增 export_csv 工具或后端独立接口
-4. **模型升级评估**：当 GPT-4o-mini 或 Qwen 等更稳定模型可用时，评估替换 Gemma4
+4. **模型升级评估**：当 GPT-4o-mini 或更新版本 Qwen 等更稳定模型可用时，评估替换当前 qwen3.6-35B
 
 ### 11.3 长期演进（1 年以上）
 
@@ -589,8 +589,8 @@
 | 决策 ID | 决策内容 | 决策依据 | 日期 |
 |---------|---------|---------|------|
 | D1 | 采用方案 A（分层共享架构） | 配置量与隔离性平衡 | 2026-07-31 |
-| D2 | A1 不挂工具（tools=[]） | 规避 Gemma4 重复调用工具缺陷 | 2026-07-31 |
-| D3 | recursion_limit=3 | 化解 Gemma4 重复提问缺陷 | 2026-07-31 |
+| D2 | A1 不挂工具（tools=[]） | 规避 qwen3.6-35B 重复调用工具缺陷 | 2026-07-31 |
+| D3 | recursion_limit=3 | 化解 qwen3.6-35B 重复提问缺陷 | 2026-07-31 |
 | D4 | MVP 仅做基础查询 | 控制范围，快速验证 | 2026-07-31 |
 | D5 | 逐套上线 | 降低风险，逐步积累数据 | 2026-07-31 |
 | D6 | 依赖现有聚合视图 | 避免多工具组合风险 | 2026-07-31 |
@@ -598,21 +598,21 @@
 
 ### 12.2 参考资料
 
-- [librechat.yaml](file:///LibreChat/librechat.yaml) - LibreChat 主配置文件
-- [mcp-inv-server-v2](file:///my-project/mcp-inv-server-v2) - MCP 服务端项目
-- 历史教训记录（详见项目内部知识库，不公开）
-- [dwd_views.sql](file:///my-project/mcp-inv-server-v2/sql/dwd_views.sql) - DWD 视图定义
-- [AgentChain.tsx](file:///LibreChat/client/src/components/SidePanel/Agents/Advanced/AgentChain.tsx) - Chain UI 组件
-- [chain.ts](file:///LibreChat/packages/api/src/agents/chain.ts) - Chain 执行逻辑
-- [assistants.ts:269-315](file:///LibreChat/packages/data-provider/src/types/assistants.ts#L269-L315) - Agent 类型定义
-- [agents.ts:657-687](file:///LibreChat/packages/data-provider/src/types/agents.ts#L657-L687) - GraphEdge 类型定义
-- [multi-agent-mcp-design.md v2.0](file:///my-project/docs/plans/multi-agent-mcp-design.md) - 前期方案（已被本方案取代）
+- [librechat.yaml](librechat/librechat.yaml) - LibreChat 主配置文件
+- [mcp-inv-server-v2](mcp-inv-server-v2) - MCP 服务端项目
+- (本仓库不含内部记忆)
+- [dwd_views.sql](mcp-inv-server-v2/sql/dwd_views.sql) - DWD 视图定义
+- [AgentChain.tsx](librechat/client/src/components/SidePanel/Agents/Advanced/AgentChain.tsx) - Chain UI 组件
+- [chain.ts](librechat/packages/api/src/agents/chain.ts) - Chain 执行逻辑
+- [assistants.ts:269-315](librechat/packages/data-provider/src/types/assistants.ts#L269-L315) - Agent 类型定义
+- [agents.ts:657-687](librechat/packages/data-provider/src/types/agents.ts#L657-L687) - GraphEdge 类型定义
+- [multi-agent-mcp-design.md v2.0](multi-agent-mcp-design.md) - 前期方案（已被本方案取代）
 
 ### 12.3 术语表
 
 | 术语 | 释义 |
 |------|------|
-| Endpoint | LibreChat 中的模型接入端点（如 Gemma-4-Local） |
+| Endpoint | LibreChat 中的模型接入端点（如 Qwen-3.6-Local） |
 | Assistant / Agent | LibreChat 中基于 Endpoint 创建的智能助手，可挂载工具和 Prompt |
 | MCP | Model Context Protocol，模型上下文协议 |
 | Agent Chain | LibreChat 原生能力，多个 Agent 顺序执行，自动传递上下文 |

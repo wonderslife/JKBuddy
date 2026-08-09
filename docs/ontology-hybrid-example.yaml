@@ -1,0 +1,271 @@
+# =============================================================================
+# JKBuddy 本体层示例（混合架构：共享核心 + 领域扩展）
+# -----------------------------------------------------------------------------
+# 说明：本文件为"示例/模板"，用一个文件集中展示多文件布局，便于理解格式。
+# 实际落地上，共享核心与各领域本体分文件存放，并通过 imports 单向依赖结合：
+#
+#   JKBuddy/platform/ontology.yaml             # 共享核心（namespace: platform）
+#   mcp-inv-server-v2/ontology/ontology.yaml   # 领域：投资（imports: [platform]）
+#   mcp-asset-server/ontology/ontology.yaml    # 领域：资产（imports: [platform]）
+#
+# 依赖方向（单向，禁止领域间互引）：
+#   platform ← domain:investment
+#   platform ← domain:asset
+#
+# 关键判定：是否绑定数据源(view/table)？ 绑定→领域；不绑定→共享核心。
+# 参考：docs/plans/07-本体架构策略（共享核心+领域扩展）.md
+# =============================================================================
+
+
+# =============================================================================
+# 一、共享核心本体（JKBuddy/platform/ontology.yaml）
+#    仅承载跨系统、与数据源无关的稳定语义。禁止出现 source_view / allowed_fields。
+# =============================================================================
+namespace: platform
+version: "1.0"
+
+# ---- 对象类型（无数据源绑定，跨系统通用）-----------------------------------
+object_types:
+  Company:
+    label: 企业/金控公司
+    properties:
+      - {name: company_id,    type: string,  desc: "企业系统唯一编号"}
+      - {name: company_name,  type: string,  desc: "企业/公司名称"}
+      - {name: company_type,  type: string,  desc: "企业类型（母基金/资本运作/风投等）"}
+      - {name: parent_id,     type: string,  desc: "上级公司编号（支持层级）"}
+
+  Dept:
+    label: 部门
+    properties:
+      - {name: dept_id,       type: string,  desc: "部门编号"}
+      - {name: dept_name,     type: string,  desc: "部门名称"}
+      - {name: ancestors,     type: string,  desc: "祖先链（支持'本部门及以下'数据范围）"}
+
+  User:
+    label: 人员
+    properties:
+      - {name: user_id,       type: string,  desc: "用户编号"}
+      - {name: user_name,     type: string,  desc: "登录名（对应蓝凌 SSO loginName）"}
+      - {name: dept_id,       type: string,  desc: "所属部门"}
+      - {name: role_ids,      type: array,   desc: "角色编号列表"}
+
+  Approval:
+    label: 审批实例
+    properties:
+      - {name: approval_id,   type: string,  desc: "审批实例编号"}
+      - {name: biz_type,      type: string,  desc: "审批所属业务类型"}
+      - {name: status,        type: string,  desc: "审批状态"}
+      - {name: current_node,  type: string,  desc: "当前审批节点"}
+      - {name: applicant,     type: string,  desc: "申请人"}
+      - {name: apply_time,    type: datetime, desc: "发起时间"}
+
+# ---- 关系类型（跨系统通用）-------------------------------------------------
+link_types:
+  BELONGS_TO:
+    label: 从属关系（用户/部门 → 组织）
+    source_object: [User, Dept]
+    target_object: [Company, Dept]
+    properties:
+      - {name: rel_role,      type: string,  desc: "从属角色"}
+
+  APPROVES:
+    label: 审批关系（用户审批实例）
+    source_object: [User]
+    target_object: [Approval]
+    properties:
+      - {name: opinion,       type: string,  desc: "审批意见"}
+      - {name: approve_time,  type: datetime, desc: "审批时间"}
+
+# ---- 通用枚举（统一口径）--------------------------------------------------
+enums:
+  money_unit:
+    - 万元                        # 所有金额字段统一单位
+  data_scope:
+    - ALL                         # 1 全部
+    - CUSTOM                      # 2 自定义
+    - DEPT                        # 3 本部门
+    - DEPT_DESC                   # 4 本部门及以下
+    - SELF                        # 5 仅本人
+  common_status:
+    - PENDING
+    - APPROVED
+    - REJECTED
+    - WITHDRAWN
+
+# ---- 平台级语义规则（不绑定数据源）-----------------------------------------
+rules:
+  - id: R-DATA-SCOPE-JUDGEMENT
+    scope: GLOBAL
+    desc: "数据权限判定"
+    definition: "数据权限(data_scope)由若依服务端依据当前登录用户自行判定，agent/MCP 不做分类识别，仅透传已认证身份"
+
+  - id: R-MONEY-UNIT
+    scope: GLOBAL
+    desc: "金额单位"
+    definition: "所有金额字段单位统一为万元"
+
+  - id: R-IDENTITY-SERVER-SIDE
+    scope: GLOBAL
+    desc: "身份服务端解析"
+    definition: "身份(loginName→sys_user)由 MCP 服务端解析，禁止客户端自报 user_id/data_scope"
+
+
+# =============================================================================
+# 二、领域扩展：投资系统（mcp-inv-server-v2/ontology/ontology.yaml）
+#    绑定 DWD 视图，import 共享核心。以下为本示例的"投资"节选（非全量）。
+# =============================================================================
+namespace: domain:investment
+version: "1.0"
+imports: [platform]
+
+# ---- 对象类型（绑定 DWD 视图，携带 primary_key 与视图白名单语义）-------------
+object_types:
+  Fund:
+    source_view: dwd_fund
+    primary_key: fund_id
+    label: 基金基本情况
+    properties:
+      - {name: fund_id,        type: string,  desc: "基金在系统中唯一编号"}
+      - {name: fund_name,      type: string,  desc: "基金名称"}
+      - {name: fund_type,      type: string,  desc: "基金类型"}
+      - {name: fund_phase,     type: string,  desc: "基金阶段"}
+      - {name: company_name,   type: string,  desc: "基金所属的金控公司"}
+      - {name: cap_date,       type: datetime, desc: "基金成立备案日期"}
+      - {name: total_size,     type: decimal, unit: 万元, desc: "基金规模"}
+      - {name: invest_amount,  type: decimal, unit: 万元, desc: "投资金额"}
+      - {name: exit_amount,    type: decimal, unit: 万元, desc: "退出金额"}
+
+  Project:
+    source_view: dwd_project
+    primary_key: proj_id
+    label: 项目基本情况
+    properties:
+      - {name: proj_id,        type: string,  desc: "项目在系统唯一编号"}
+      - {name: proj_name,      type: string,  desc: "项目名称"}
+      - {name: phase,          type: string,  desc: "项目阶段"}
+      - {name: biz_line,       type: string,  desc: "业务线（中文值，如 股权项目/融资租赁）"}
+      - {name: company_name,   type: string,  desc: "项目所属金控公司"}
+      - {name: invest_amount,  type: decimal, unit: 万元, desc: "投资金额"}
+      - {name: exit_amount,    type: decimal, unit: 万元, desc: "退出金额"}
+
+# ---- 关系类型（绑定承载该关系的跨域视图）-----------------------------------
+link_types:
+  INVESTS_IN:
+    source_view: dwd_all_biz
+    source_object: [Fund, Subfund, LP]
+    target_object: [Project, SubfundProject, Subfund, Fund]
+    subtypes: [FUND2PROJ, SUBFUND2PROJ, FUND2SUBFUND, LP2FUND]
+    label: 全部投资关系
+    properties:
+      - {name: biz_type,      type: string,  desc: "业务类型（biz_type），4 种互斥"}
+      - {name: investor_name, type: string,  desc: "投资人名称"}
+      - {name: investee_name, type: string,  desc: "被投资人名称"}
+      - {name: company_name,  type: string,  desc: "负责该投资的金控公司"}
+      - {name: flow_amt,      type: decimal, unit: 万元, desc: "实际出资额"}
+      - {name: flow_time,     type: datetime, desc: "出资流水时间"}
+
+# ---- 领域规则（绑定投资语义）-----------------------------------------------
+rules:
+  - id: R-COMPANY-ATTRIBUTION
+    scope: INVESTS_IN
+    desc: "投资归属规则"
+    definition: "投资方实体所属的金控公司；LP2FUND 回退为被投资方（基金），LP 为外部方无金控公司"
+
+  - id: R-COMMITTED-AMT-SCOPE
+    scope: INVESTS_IN
+    desc: "committed_amt 有效范围"
+    definition: "committed_amt 仅在 biz_line 为 FUND 和 LP 时有业务意义；项目类不得以 committed_amt 作投资额口径，应使用 flow_amt"
+
+# ---- 视图安全白名单（视图专属，生成 base.py 白名单的唯一依据）---------------
+security:
+  dwd_fund:
+    allowed_fields: [fund_id, fund_name, fund_type, fund_phase, company_name, cap_date, invest_amount, exit_amount, total_size]
+    date_range_fields: [cap_date]
+    amount_range_fields: [invest_amount, exit_amount, total_size]
+    group_by_fields: [fund_type, fund_phase, company_name]
+    agg_fields: [total_size, invest_amount, exit_amount]
+    null_check_fields: [cap_date, invest_amount, exit_amount]
+    prefix_match_fields: [fund_name, company_name]
+    stable_order_field: fund_id
+    default_fields: [fund_id, fund_name, fund_type, fund_phase, total_size, invest_amount, exit_amount, company_name, cap_date]
+
+  dwd_project:
+    allowed_fields: [proj_id, proj_name, phase, biz_line, company_name, invest_amount, exit_amount]
+    date_range_fields: []
+    amount_range_fields: [invest_amount, exit_amount]
+    group_by_fields: [biz_line, phase, company_name]
+    agg_fields: [invest_amount, exit_amount]
+    null_check_fields: [invest_amount, exit_amount]
+    prefix_match_fields: [proj_name, company_name]
+    stable_order_field: proj_id
+    default_fields: [proj_id, proj_name, phase, biz_line, invest_amount, exit_amount, company_name]
+
+
+# =============================================================================
+# 三、领域扩展：资产系统（mcp-asset-server/ontology/ontology.yaml）
+#    绑定若依资产表，import 共享核心；体现审批/协同等多系统能力。
+# =============================================================================
+namespace: domain:asset
+version: "1.0"
+imports: [platform]
+
+# ---- 对象类型（绑定若依资产相关表）-----------------------------------------
+object_types:
+  Asset:
+    source_view: asset_main
+    primary_key: asset_id
+    label: 资产
+    properties:
+      - {name: asset_id,       type: string,  desc: "资产编号"}
+      - {name: asset_name,     type: string,  desc: "资产名称"}
+      - {name: asset_type,     type: string,  desc: "资产类型"}
+      - {name: dept_id,        type: string,  desc: "所属部门"}
+      - {name: book_value,     type: decimal, unit: 万元, desc: "账面价值"}
+
+  Disposal:
+    source_view: asset_disposal
+    primary_key: disposal_id
+    label: 资产处置单
+    properties:
+      - {name: disposal_id,    type: string,  desc: "处置单编号"}
+      - {name: asset_id,       type: string,  desc: "关联资产编号"}
+      - {name: disposal_type,  type: string,  desc: "处置方式（转让/拍卖/报废等）"}
+      - {name: status,         type: string,  desc: "处置状态"}
+      - {name: est_value,      type: decimal, unit: 万元, desc: "评估价值"}
+
+# ---- 关系类型（审批、协同绑定若依接口/外部系统）-----------------------------
+link_types:
+  SUBMITS:
+    label: 资产处置提交审批
+    source_object: [Asset]
+    target_object: [Approval]
+    properties:
+      - {name: submit_node,    type: string,  desc: "提交节点"}
+
+  COLLAB_PUSH:
+    label: 跨系统协同推送
+    source_object: [Disposal]
+    target_object: [Asset]
+    properties:
+      - {name: target_system,  type: string,  desc: "目标系统（产权交易/拍卖/评估/税务）"}
+      - {name: sync_status,    type: string,  desc: "同步状态"}
+
+# ---- 领域规则 --------------------------------------------------------------
+rules:
+  - id: R-DISPOSAL-APPROVAL
+    scope: SUBMITS
+    desc: "处置审批由若依裁决"
+    definition: "资产处置审批动作经若依 REST，由 @PreAuthorize + @DataScope 二次鉴权；MCP 不代批、不放行"
+
+# ---- 视图安全白名单 --------------------------------------------------------
+security:
+  asset_main:
+    allowed_fields: [asset_id, asset_name, asset_type, dept_id, book_value]
+    date_range_fields: []
+    amount_range_fields: [book_value]
+    group_by_fields: [asset_type, dept_id]
+    agg_fields: [book_value]
+    null_check_fields: [book_value]
+    prefix_match_fields: [asset_name]
+    stable_order_field: asset_id
+    default_fields: [asset_id, asset_name, asset_type, dept_id, book_value]

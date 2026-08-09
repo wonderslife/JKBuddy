@@ -39,7 +39,7 @@ python -m inv_mcp_v2.server
 ### 2. 配置 LibreChat 客户端
 
 `JKBuddy-client/` 为 LibreChat 的定制补丁（Skill 目录、`librechat.yaml` 本地模型、Docker 配置），
-`librechat/` 为完整的 LibreChat 源码快照。将定制补丁合并到源码快照后启动，详见 `docs/01-多Agent问数架构设计.md`。
+`librechat/` 为完整的 LibreChat 源码快照。将定制补丁合并到源码快照后启动，详见 `docs/` 下的设计文档（`01-JKBuddy产品设计蓝图.md` 为总览，`02-投资问数多Agent架构设计.md` 为多 Agent 架构，`03-LibreChat落地操作指南.md` 为部署指南）。
 
 ## 安全说明
 

@@ -2,8 +2,8 @@
 
 > **文档版本**：v1.17
 > **生成日期**：2026-07-31
-> **更新日期**：2026-08-05（同步最新 `librechat.yaml` 与 `.env`；新增业务 Skill `investment-dwd-query`；重构 A1/A2 指令为"两级查询策略：优先 `dwd_all_biz`，查不到再分头查专表"；强化 A2"数据真实性规则（禁止臆测/加工）"与"分页处理规则"；**v1.5 新增"链式/多跳关系核实"规则防"拼接臆测"，并修正 Step 7 工具清单补挂 `query_all_biz`；v1.6 新增 E2E-011（链式防拼接验证）与 E2E-012（分页验证）专门用例；v1.7 修复分页重复/错乱：服务端为每个视图增加稳定唯一排序兜底，用户未明确要求排序时一律不传 `order_by`，避免非法字段导致无 ORDER BY 分页不稳定；v1.8 修复"重复输出"问题：确认 A1 不得同时配置 Handoff 与 Chain 指向 A2（两条不同 edgeType 的边会被同时保留，导致 A2 被触发两次），并新增 E2E-013 重复输出验证用例；v1.9 修复"翻页后数据编造"问题：A1 对"列出所有/全部"类请求必须输出 `limit: 200` 一次取全避免翻页，A2 分页规则强制"offset>0 翻页必须重新调用工具、禁止复用旧数据/占位说明"，并新增 E2E-014 翻页真实性验证用例；v1.10 全面剔除"模拟输出"：A1/A2 指令与 SKILL 增加"禁止模拟输出"（不得输出"环境限制/实际执行中将调用/占位符"等），A1 输出格式增加"只输出一次"+offset 只放"其他参数"字段+"下一页"offset 递推规则，A2 输出格式增加"只输出一次最终结果"，并修正 A1 澄清轮数 recursion_limit=10→3 与 Step 14 保持一致；v1.11 新增"追问必重查"强制规则：A2 工具调用约束与 SKILL 边界明确"每次用户追问/新请求必须重新调用 MCP 工具获取最新数据，禁止复用历史上下文中旧的工具结果、禁止凭模型记忆输出"，并禁止"根据您的查询，我已为您调取了..."等模拟/复用表述，每段输出必须由本轮真实工具调用产生（针对"市投资基金投资明细"两段重复输出问题）；v1.12 支持 mermaid 图表（图中节点/关系/数值必须来自工具真实返回 data，禁止编造）；v1.13 新增"循环终止"硬性机制：A2 同一查询重试 2 次仍失败即终止、A1 澄清 3 轮仍无法确定即输出 UNCLEAR 终止，禁止无休止换参数重试/重新分类，防止死循环**）；**v1.14 新增"数据忠实性规则"：实测数据库存在名称含"测试"的真实项目（如"测试数据-ct直投0612""股权测试"）与同一"投资方→被投资方"的多条重复记录（如"拓源控股→沈阳华德海泰电器有限公司_2026年度"重复 63 条），模型曾自行过滤/去重导致与数据库实际行数不一致；故在 A2 指令与 SKILL 新增"禁止自行过滤/去重/修改"规则（工具返回每一行必须原样呈现、total 必须一致、未经用户明确要求严禁加工），并在 A1 约束新增"禁止引入过滤/去重参数"**）；**v1.15 对 Instruction 与 Skill 做"去重归位 + 调用保障"重构：二者原存在大量重复（两级策略/工具映射/参数构造/分页/链式/数据真实性等双写），易漂移且占 token；现将 Skill 定位为唯一"技术实现层"（实体/数据来源/工具路由/参数值映射，并设 `always-apply: true` 保证每个 turn 自动注入），将 A2 Instruct 定位为唯一"行为层"（角色感知/输出格式/数据真实性/数据忠实性/链式防拼接/分页展示/追问必重查/循环终止/禁止模拟），重复内容按职责归位、一方只保留引用；并明确 **A1 不挂载 Skill**（A1 纯分类不调工具，避免工具注入与 token 浪费，其精简语义表与 Skill 同源维护）**）；**v1.16 修复"重复输出"（实测定位）：数据库实测同一条 A1 消息的 `content` 数组里，`content[0]`（A1）与 `content[1]`（A2）各输出了一份几乎相同的查询结果表格，前端串联渲染成"重复输出"。根因是**架构错配**：A1 明明是"纯分类器"，实际部署却用了 **subagents（子代理）** 机制（`subagents.enabled=true, agent_ids=[A2]`），子代理 A2 的结果被并入 A1 消息；且 A1 模型在分类后**复用了同一对话历史里前几轮已查过的数据**，在 `content[0]` 画蛇添足自行生成了表格（违反其"只输出结构化分类"约束）。修复：将 A1 从 subagents 改为文档推荐的 **Handoff**（`edges=[{from:A1,to:A2,edgeType:'handoff'}]`，`subagents.enabled=false`），使 A2 独立输出结果；并重写 A1 指令新增"交接动作（调用 `lc_transfer_to_*` 把分类结果传给执行器）+ 严禁输出任何查询结果表格/汇总 + 严禁复用历史查询数据"硬约束（最高优先级）。Handoff 能力默认可用（`agents.use/create:true`，运行时 multi-agent 图随 edges 自动构建并注入 `lc_transfer_to_` 交接工具），无需改 yaml/router。）**）；**v1.17 `dwd_all_biz` 视图新增 `company_name` 字段（语义：该投资所负责的金控内部公司 = 投资方实体所属金控公司）：① `sql/dwd_views.sql` 为 4 个 UNION 分支（FUND2PROJ/SUBFUND2PROJ/FUND2SUBFUND/LP2FUND）LEFT JOIN `dwd_fund`/`dwd_subfund` 关联出 `company_name`（FUND2PROJ/SUBFUND2PROJ/FUND2SUBFUND 取投资方公司，LP2FUND 取被投资方基金公司）；② 服务端 `base.py` 白名单（ALLOWED_FIELDS/GROUP_BY_FIELDS/PREFIX_MATCH_FIELDS/DEFAULT_FIELDS）为 `dwd_all_biz` 增加 `company_name`；③ `summary.py` 的 `query_all_biz` 新增 `company_name`（精确）与 `company_name_prefix`（前缀）参数，支持按金控公司过滤跨域投资关系；④ Skill `investment-dwd-query` 同步补充 `company_name` 语义与路由参数；⑤ 本指南同步更新 A1/A2 指令、Step 7 工具说明与数据结构说明，并新增"附录 F：dwd_all_biz 数据结构说明（v1.17）"与"附录 G：本体层（Ontology）架构评估与设计方案"**）；**v1.18 引入本体层（Ontology）落地：引入 `ontology.yaml` 作为语义单一事实源（SSOT），MCP 启动/首次导入时自动加载生成运行时白名单（改本体→重启即生效，无需命令同步）；新增第 12 个 MCP 工具 `get_ontology`（内省工具，A2 可对话中动态拉取本体定义，指令/SKILL 不再写死语义）；SKILL 语义段改为引用本体生成的人读投影 `skill-semantics.md`，仅保留操作适配层；A1/A2 指令按"行为/语义分离"原则做引用性修改（详见"阶段〇：引入本体层"）**）
-> **配套设计文档**：[02-投资问数多Agent架构设计.md](file:///c:/Users/wonder/trae-projects/my-project/docs/plans/02-投资问数多Agent架构设计.md)
+> **更新日期**：2026-08-05（同步最新 `librechat.yaml` 与 `.env`；新增业务 Skill `investment-dwd-query`；重构 A1/A2 指令为"两级查询策略：优先 `dwd_all_biz`，查不到再分头查专表"；强化 A2"数据真实性规则（禁止臆测/加工）"与"分页处理规则"；**v1.5 新增"链式/多跳关系核实"规则防"拼接臆测"，并修正 Step 7 工具清单补挂 `query_all_biz`；v1.6 新增 E2E-011（链式防拼接验证）与 E2E-012（分页验证）专门用例；v1.7 修复分页重复/错乱：服务端为每个视图增加稳定唯一排序兜底，用户未明确要求排序时一律不传 `order_by`，避免非法字段导致无 ORDER BY 分页不稳定；v1.8 修复"重复输出"问题：确认 A1 不得同时配置 Handoff 与 Chain 指向 A2（两条不同 edgeType 的边会被同时保留，导致 A2 被触发两次），并新增 E2E-013 重复输出验证用例；v1.9 修复"翻页后数据编造"问题：A1 对"列出所有/全部"类请求必须输出 `limit: 200` 一次取全避免翻页，A2 分页规则强制"offset>0 翻页必须重新调用工具、禁止复用旧数据/占位说明"，并新增 E2E-014 翻页真实性验证用例；v1.10 全面剔除"模拟输出"：A1/A2 指令与 SKILL 增加"禁止模拟输出"（不得输出"环境限制/实际执行中将调用/占位符"等），A1 输出格式增加"只输出一次"+offset 只放"其他参数"字段+"下一页"offset 递推规则，A2 输出格式增加"只输出一次最终结果"，并修正 A1 澄清轮数 recursion_limit=10→3 与 Step 14 保持一致；v1.11 新增"追问必重查"强制规则：A2 工具调用约束与 SKILL 边界明确"每次用户追问/新请求必须重新调用 MCP 工具获取最新数据，禁止复用历史上下文中旧的工具结果、禁止凭模型记忆输出"，并禁止"根据您的查询，我已为您调取了..."等模拟/复用表述，每段输出必须由本轮真实工具调用产生（针对"某市投资基金投资明细"两段重复输出问题）；v1.12 支持 mermaid 图表（图中节点/关系/数值必须来自工具真实返回 data，禁止编造）；v1.13 新增"循环终止"硬性机制：A2 同一查询重试 2 次仍失败即终止、A1 澄清 3 轮仍无法确定即输出 UNCLEAR 终止，禁止无休止换参数重试/重新分类，防止死循环**）；**v1.14 新增"数据忠实性规则"：实测数据库存在名称含"测试"的真实项目（如"测试数据-ct直投0612""股权测试"）与同一"投资方→被投资方"的多条重复记录（如"某控股公司→某电器有限公司_2026年度"重复 63 条），模型曾自行过滤/去重导致与数据库实际行数不一致；故在 A2 指令与 SKILL 新增"禁止自行过滤/去重/修改"规则（工具返回每一行必须原样呈现、total 必须一致、未经用户明确要求严禁加工），并在 A1 约束新增"禁止引入过滤/去重参数"**）；**v1.15 对 Instruction 与 Skill 做"去重归位 + 调用保障"重构：二者原存在大量重复（两级策略/工具映射/参数构造/分页/链式/数据真实性等双写），易漂移且占 token；现将 Skill 定位为唯一"技术实现层"（实体/数据来源/工具路由/参数值映射，并设 `always-apply: true` 保证每个 turn 自动注入），将 A2 Instruct 定位为唯一"行为层"（角色感知/输出格式/数据真实性/数据忠实性/链式防拼接/分页展示/追问必重查/循环终止/禁止模拟），重复内容按职责归位、一方只保留引用；并明确 **A1 不挂载 Skill**（A1 纯分类不调工具，避免工具注入与 token 浪费，其精简语义表与 Skill 同源维护）**）；**v1.16 修复"重复输出"（实测定位）：数据库实测同一条 A1 消息的 `content` 数组里，`content[0]`（A1）与 `content[1]`（A2）各输出了一份几乎相同的查询结果表格，前端串联渲染成"重复输出"。根因是**架构错配**：A1 明明是"纯分类器"，实际部署却用了 **subagents（子代理）** 机制（`subagents.enabled=true, agent_ids=[A2]`），子代理 A2 的结果被并入 A1 消息；且 A1 模型在分类后**复用了同一对话历史里前几轮已查过的数据**，在 `content[0]` 画蛇添足自行生成了表格（违反其"只输出结构化分类"约束）。修复：将 A1 从 subagents 改为文档推荐的 **Handoff**（`edges=[{from:A1,to:A2,edgeType:'handoff'}]`，`subagents.enabled=false`），使 A2 独立输出结果；并重写 A1 指令新增"交接动作（调用 `lc_transfer_to_*` 把分类结果传给执行器）+ 严禁输出任何查询结果表格/汇总 + 严禁复用历史查询数据"硬约束（最高优先级）。Handoff 能力默认可用（`agents.use/create:true`，运行时 multi-agent 图随 edges 自动构建并注入 `lc_transfer_to_` 交接工具），无需改 yaml/router。）**）；**v1.17 `dwd_all_biz` 视图新增 `company_name` 字段（语义：该投资所负责的金控内部公司 = 投资方实体所属金控公司）：① `sql/dwd_views.sql` 为 4 个 UNION 分支（FUND2PROJ/SUBFUND2PROJ/FUND2SUBFUND/LP2FUND）LEFT JOIN `dwd_fund`/`dwd_subfund` 关联出 `company_name`（FUND2PROJ/SUBFUND2PROJ/FUND2SUBFUND 取投资方公司，LP2FUND 取被投资方基金公司）；② 服务端 `base.py` 白名单（ALLOWED_FIELDS/GROUP_BY_FIELDS/PREFIX_MATCH_FIELDS/DEFAULT_FIELDS）为 `dwd_all_biz` 增加 `company_name`；③ `summary.py` 的 `query_all_biz` 新增 `company_name`（精确）与 `company_name_prefix`（前缀）参数，支持按金控公司过滤跨域投资关系；④ Skill `investment-dwd-query` 同步补充 `company_name` 语义与路由参数；⑤ 本指南同步更新 A1/A2 指令、Step 7 工具说明与数据结构说明，并新增"附录 F：dwd_all_biz 数据结构说明（v1.17）"与"附录 G：本体层（Ontology）架构评估与设计方案"**）；**v1.18 引入本体层（Ontology）落地：引入 `ontology.yaml` 作为语义单一事实源（SSOT），MCP 启动/首次导入时自动加载生成运行时白名单（改本体→重启即生效，无需命令同步）；新增第 12 个 MCP 工具 `get_ontology`（内省工具，A2 可对话中动态拉取本体定义，指令/SKILL 不再写死语义）；SKILL 语义段改为引用本体生成的人读投影 `skill-semantics.md`，仅保留操作适配层；A1/A2 指令按"行为/语义分离"原则做引用性修改（详见"阶段〇：引入本体层"）**）
+> **配套设计文档**：[02-投资问数多Agent架构设计.md](02-投资问数多Agent架构设计.md)
 > **目标**：提供可在 LibreChat 上逐步执行的落地操作指南
 
 ---
@@ -16,29 +16,29 @@
 
 | 配置项 | 当前状态 | 文件位置 | 是否需要修改 |
 |--------|---------|---------|-------------|
-| Gemma-4-Local Endpoint | ✅ 已配置 | [librechat.yaml:528-542](file:///c:/Users/wonder/trae-projects/LibreChat/librechat.yaml#L528) | ❌ 无需修改 |
-| Endpoint capabilities | `[files, agents]` | [librechat.yaml:535-537](file:///c:/Users/wonder/trae-projects/LibreChat/librechat.yaml#L535) | ❌ 无需修改（chain 在运行时默认值中） |
-| mcpSettings.allowedAddresses | ✅ 包含 `10.0.11.6:8080`、`10.0.11.6:8017` | [librechat.yaml:344-349](file:///c:/Users/wonder/trae-projects/LibreChat/librechat.yaml#L344) | ❌ 无需修改 |
-| **actions.allowedDomains** | ✅ 已含 `http://10.0.11.6:8080/mcp`、`http://10.0.11.6:8017/mcp` | [librechat.yaml:273-280](file:///c:/Users/wonder/trae-projects/LibreChat/librechat.yaml#L273) | ❌ 无需修改 |
-| mcpServers 配置 | ❌ **被注释掉** | [librechat.yaml:352-358](file:///c:/Users/wonder/trae-projects/LibreChat/librechat.yaml#L352) | ✅ **必须取消注释** |
-| agents 全局配置 | ❌ 被注释（默认值已含 chain/subagents） | [librechat.yaml:406-431](file:///c:/Users/wonder/trae-projects/LibreChat/librechat.yaml#L406) | ❌ 无需修改 |
-| MCP 服务端 | ✅ 运行中 @ 10.0.11.6:8080 | mcp-inv-server-v2 | ❌ 无需修改 |
+| Qwen-3.6-Local Endpoint | ✅ 已配置 | [librechat.yaml:528-542](librechat/librechat.yaml#L528) | ❌ 无需修改 |
+| Endpoint capabilities | `[files, agents]` | [librechat.yaml:535-537](librechat/librechat.yaml#L535) | ❌ 无需修改（chain 在运行时默认值中） |
+| mcpSettings.allowedAddresses | ✅ 包含 `10.0.0.5:8080`、`10.0.0.5:8017` | [librechat.yaml:344-349](librechat/librechat.yaml#L344) | ❌ 无需修改 |
+| **actions.allowedDomains** | ✅ 已含 `http://10.0.0.5:8080/mcp`、`http://10.0.0.5:8017/mcp` | [librechat.yaml:273-280](librechat/librechat.yaml#L273) | ❌ 无需修改 |
+| mcpServers 配置 | ❌ **被注释掉** | [librechat.yaml:352-358](librechat/librechat.yaml#L352) | ✅ **必须取消注释** |
+| agents 全局配置 | ❌ 被注释（默认值已含 chain/subagents） | [librechat.yaml:406-431](librechat/librechat.yaml#L406) | ❌ 无需修改 |
+| MCP 服务端 | ✅ 运行中 @ 10.0.0.5:8080 | mcp-inv-server-v2 | ❌ 无需修改 |
 
 ### `.env` 环境变量（已核实）
 
 | 变量 | 值 | 说明 |
 |------|-----|------|
-| `HOST` | `10.0.11.6` | Web 服务监听地址 |
+| `HOST` | `10.0.0.5` | Web 服务监听地址 |
 | `PORT` | `3090` | Web 服务端口（**非 3080**） |
-| `DOMAIN_CLIENT` / `DOMAIN_SERVER` | `http://10.0.11.6:3090` | 前端 / 后端访问域名 |
-| `ENDPOINTS` | `agents,custom` | 仅启用 agents 与 custom（Gemma）端点 |
+| `DOMAIN_CLIENT` / `DOMAIN_SERVER` | `http://10.0.0.5:3090` | 前端 / 后端访问域名 |
+| `ENDPOINTS` | `agents,custom` | 仅启用 agents 与 custom（Qwen）端点 |
 
-> **访问地址**：LibreChat Web 界面为 `http://10.0.11.6:3090`，API 为 `http://10.0.11.6:3090/api`。
+> **访问地址**：LibreChat Web 界面为 `http://10.0.0.5:3090`，API 为 `http://10.0.0.5:3090/api`。
 
 ### 关键发现
 
 1. **mcpServers 配置被注释掉** — 这是 MCP 工具无法在 LibreChat 中识别的根本原因
-2. **capabilities 无需修改** — `chain` 与 `subagents` 已在运行时默认 capabilities 中（[config.ts:682-699](file:///c:/Users/wonder/trae-projects/LibreChat/packages/data-provider/src/config.ts#L682)），**Handoff 模式始终可用**，无需额外配置
+2. **capabilities 无需修改** — `chain` 与 `subagents` 已在运行时默认 capabilities 中（[config.ts:682-699](librechat/packages/data-provider/src/config.ts#L682)），**Handoff 模式始终可用**，无需额外配置
 3. **建议使用 Handoff 模式** — 兼容当前配置，无需修改 capabilities
 4. **`actions.allowedDomains` 已就绪** — 已包含 MCP 服务地址，打通了 MCP-over-HTTP 的访问控制（与 `mcpSettings.allowedAddresses` 互补）
 
@@ -113,7 +113,7 @@
 
 **目标**：让 LibreChat 识别 MCP 服务并加载 10 个工具
 
-**文件**：[librechat.yaml:352-358](file:///c:/Users/wonder/trae-projects/LibreChat/librechat.yaml#L352)
+**文件**：[librechat.yaml:352-358](librechat/librechat.yaml#L352)
 
 **操作**：将以下被注释的配置：
 
@@ -121,7 +121,7 @@
 #mcpServers:
 #  inv-mcp:
 #    type: streamable-http
-#    url: http://10.0.11.6:8080/mcp  # 完整服务地址（含协议和路径）
+#    url: http://10.0.0.5:8080/mcp  # 完整服务地址（含协议和路径）
 #    timeout: 60000
 #    headers:
 #      Authorization: "Bearer dev_token_123"  # ⚠️ 核心认证配置
@@ -133,7 +133,7 @@
 mcpServers:
   inv-mcp:
     type: streamable-http
-    url: http://10.0.11.6:8080/mcp
+    url: http://10.0.0.5:8080/mcp
     timeout: 60000
     headers:
       Authorization: "Bearer dev_token_123"
@@ -144,15 +144,15 @@ mcpServers:
 ### Step 2：跳过 — 无需额外配置
 
 > **核实结果**：`chain` 和 `subagents` 已在 LibreChat 默认的 AgentCapabilities 中
-> （[config.ts:682-699](file:///c:/Users/wonder/trae-projects/LibreChat/packages/data-provider/src/config.ts#L682)）。
-> `Handoff` 模式始终可用（[OrchestrationHub.tsx:49-53](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Advanced/OrchestrationHub.tsx#L49)），
+> （[config.ts:682-699](librechat/packages/data-provider/src/config.ts#L682)）。
+> `Handoff` 模式始终可用（[OrchestrationHub.tsx:49-53](librechat/client/src/components/SidePanel/Agents/Advanced/OrchestrationHub.tsx#L49)），
 > 不依赖任何 capability 配置。无需修改 `librechat.yaml`。
 
 ### Step 3：重启 LibreChat
 
 ```bash
 # 在 LibreChat 项目目录执行
-cd c:\Users\wonder\trae-projects\LibreChat
+cd <librechat-home>
 docker-compose restart
 ```
 
@@ -169,11 +169,11 @@ docker-compose restart
 
 ### Step 4：进入 Agent 创建界面
 
-1. 打开 LibreChat Web 界面（`http://10.0.11.6:3090`，来自 `.env` 的 `HOST`/`PORT`）
+1. 打开 LibreChat Web 界面（`http://10.0.0.5:3090`，来自 `.env` 的 `HOST`/`PORT`）
 2. 点击左侧边栏的 **"Agents"** 图标（机器人图标）
 3. 点击 **"Create Agent"** 按钮（或 "新建 Agent"）
 
-**对应 UI 组件**：[AgentConfig.tsx](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/AgentConfig.tsx)
+**对应 UI 组件**：[AgentConfig.tsx](librechat/client/src/components/SidePanel/Agents/AgentConfig.tsx)
 
 ### Step 5：配置 A2 基础信息
 
@@ -181,10 +181,10 @@ docker-compose restart
 
 | 字段 | 填写值 | UI 位置 |
 |------|--------|---------|
-| **Name**（名称） | `投资数据执行器` | 顶部输入框，[AgentConfig.tsx:61-86](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/AgentConfig.tsx#L61) |
+| **Name**（名称） | `投资数据执行器` | 顶部输入框，[AgentConfig.tsx:61-86](librechat/client/src/components/SidePanel/Agents/AgentConfig.tsx#L61) |
 | **Description**（描述） | `接收意图分类结果，调用 MCP 工具执行查询` | Name 下方输入框 |
-| **Provider**（端点） | 选择 `Gemma-4-Local` | 点击 provider 按钮跳转选择面板 |
-| **Model**（模型） | `gemma-4-26B-A4B-it` | 点击 model 按钮选择 |
+| **Provider**（端点） | 选择 `Qwen-3.6-Local` | 点击 provider 按钮跳转选择面板 |
+| **Model**（模型） | `qwen3.6-35B` | 点击 model 按钮选择 |
 
 ### Step 6：配置 A2 Instructions（System Prompt）
 
@@ -247,7 +247,7 @@ A1 传来的"关键参数"是抽象概念，不能直接透传给工具。**具�
 8. **循环终止（⚠️ 防死循环）**：同一查询连续重试 **2 次**仍返回空/失败即**终止**，如实报告"查询失败/无数据"，**禁止**无休止换参数重试、禁止重新分类后再查；若工具报错，报告错误后停止，不再绕圈
 
 ## 数据忠实性规则（⚠️ 禁止自行过滤/去重/修改，最高优先级）
-> **真实教训**：数据库中 `dwd_project` 存在名称含"测试"的真实项目（如"测试数据-ct直投0612""股权测试"），`dwd_all_biz` 存在同一"投资方→被投资方"的多条记录（如同一关系分多笔出资/多期投资，如"拓源控股→沈阳华德海泰电器有限公司_2026年度"重复 63 条）。这些都是数据库**真实存在**的数据。模型曾自行判断"测试"为脏数据、重复为冗余而过滤/去重，导致输出与数据库实际行数不一致。
+> **真实教训**：数据库中 `dwd_project` 存在名称含"测试"的真实项目（如"测试数据-ct直投0612""股权测试"），`dwd_all_biz` 存在同一"投资方→被投资方"的多条记录（如同一关系分多笔出资/多期投资，如"某控股公司→某电器有限公司_2026年度"重复 63 条）。这些都是数据库**真实存在**的数据。模型曾自行判断"测试"为脏数据、重复为冗余而过滤/去重，导致输出与数据库实际行数不一致。
 1. **原样呈现，禁止过滤**：工具返回的**每一行**都必须原样输出。**禁止**因记录名称包含"测试""示例""demo""备份""临时"等关键词，就自行判断为测试/脏数据而过滤掉。
 2. **禁止自行去重**：数据库可能存在同一"投资方→被投资方"的多条记录（分多笔出资、分多期投资、多笔放款等），这些是真实数据，**必须逐条如实返回**，不得合并、去重或只取一条。
 3. **未经用户明确要求严禁加工**：只有用户明确要求（如"只看正式项目""去掉重复项""排除测试数据"）时，才可按指示过滤；否则**严禁**对工具返回数据做任何过滤、去重、排序改变、截断或字段修改。
@@ -256,7 +256,7 @@ A1 传来的"关键参数"是抽象概念，不能直接透传给工具。**具�
 6. **数据以工具返回为准**：一切数据以本轮工具真实返回的 `data` 为准，禁止模型用自己的常识或记忆补充、删减或"清理"数据。
 
 ## 链式/多跳关系核实（⚠️ 防"拼接臆测"，最高优先级）
-> **真实教训**：`市投资基金→沈阳都市圈基金`（FUND2SUBFUND）与 `市投资基金→数据集团`（FUND2PROJ）是两条**独立**关系，但模型曾错误拼接成虚假链"市投资基金→沈阳都市圈基金→数据集团"。实测 `query_all_biz(investor_name=沈阳都市圈基金)` 返回 `total:0`，证明该中间节点无下游投资，链不存在。
+> **真实教训**：`某市投资基金→某都市圈基金`（FUND2SUBFUND）与 `某市投资基金→某数据集团`（FUND2PROJ）是两条**独立**关系，但模型曾错误拼接成虚假链"某市投资基金→某都市圈基金→某数据集团"。实测 `query_all_biz(investor_name=某都市圈基金)` 返回 `total:0`，证明该中间节点无下游投资，链不存在。
 1. 输出中每一个"→"必须对应工具返回的**一条独立记录**；不得凭空连接
 2. 要输出"X→Y→Z"链，必须**分别**调用工具确认 X→Y **且** Y→Z 都真实存在；**任一跳返回空，整条链即不得输出**
 3. 禁止拼接两条独立关系：若工具只返回 X→Y 和 X→Z，**不得**拼成 X→Y→Z；只能如实说明"X 直接投了 Z，X 也投了 Y，但未查到 X 经 Y 投 Z 的数据"
@@ -302,7 +302,7 @@ A1 传来的"关键参数"是抽象概念，不能直接透传给工具。**具�
 - 附完整明细
 ```
 
-**对应 UI**：[Instructions 组件](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Instructions.tsx)
+**对应 UI**：[Instructions 组件](librechat/client/src/components/SidePanel/Agents/Instructions.tsx)
 
 ### Step 6b：为 A2 挂载独立业务 Skill
 
@@ -313,7 +313,7 @@ A1 传来的"关键参数"是抽象概念，不能直接透传给工具。**具�
 **Skill 文件**：`LibreChat/skill/investment-dwd-query/SKILL.md`
 
 **Skill 内容**（技术实现层）：
-- 实体定义规范：集团指代（"盛京金控集团/金控/盛京金控/集团"→ 全集团）、投资领域默认 6 家子公司
+- 实体定义规范：集团指代（"某金控集团集团/金控/某金控集团/集团"→ 全集团）、投资领域默认 6 家子公司
 - 数据查询逻辑：默认 `dwd_all_biz` 主视图、biz_type 四类定义、关键字段（investor_*/investee_*）、biz_line 分类、金额字段规则
 - 工具路由与参数映射：把概念业务逻辑转换为实际 MCP 工具参数
 
@@ -376,7 +376,7 @@ A1 传来的"关键参数"是抽象概念，不能直接透传给工具。**具�
 
 6. 点击 **"Save"** 或 **"确认"** 保存工具选择
 
-**对应 UI**：[ToolsSection.tsx:266-375](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Tools/ToolsSection.tsx#L266)
+**对应 UI**：[ToolsSection.tsx:266-375](librechat/client/src/components/SidePanel/Agents/Tools/ToolsSection.tsx#L266)
 
 ### Step 8：配置 A2 高级设置
 
@@ -385,18 +385,18 @@ A1 传来的"关键参数"是抽象概念，不能直接透传给工具。**具�
 
 | 字段 | 填写值 | UI 位置 |
 |------|--------|---------|
-| **Max Agent Steps**（recursion_limit） | `25` | [MaxAgentSteps.tsx](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Advanced/MaxAgentSteps.tsx) — 数字输入框 |
+| **Max Agent Steps**（recursion_limit） | `25` | [MaxAgentSteps.tsx](librechat/client/src/components/SidePanel/Agents/Advanced/MaxAgentSteps.tsx) — 数字输入框 |
 
 > **说明**：A2 的 recursion_limit 保持默认 25 即可。
 >
 > **注意**：LibreChat UI 中无 `end_after_tools` 开关。
-> 该字段仅存在于类型系统和 API 层（[validation.ts:705](file:///c:/Users/wonder/trae-projects/LibreChat/packages/api/src/agents/validation.ts#L705)），
+> 该字段仅存在于类型系统和 API 层（[validation.ts:705](librechat/packages/api/src/agents/validation.ts#L705)），
 > 搜索整个 `client/src/components/SidePanel/Agents/` 目录（排除测试文件）未发现 UI 组件渲染此开关。
 >
 > - **防重策略**：通过 A2 Instructions 中的 Prompt 防重规则即可
 > - **如后续发现重复调用**，通过 API 设置：
 >   ```bash
->   curl -X PATCH http://10.0.11.6:3090/api/agents/<A2_AGENT_ID> \
+>   curl -X PATCH http://10.0.0.5:3090/api/agents/<A2_AGENT_ID> \
 >     -H "Content-Type: application/json" \
 >     -H "Authorization: Bearer <YOUR_TOKEN>" \
 >     -d '{"end_after_tools": true}'
@@ -404,7 +404,7 @@ A1 传来的"关键参数"是抽象概念，不能直接透传给工具。**具�
 
 3. 点击 **"Save"** 保存 Agent
 
-**对应 UI**：[AdvancedPanel.tsx](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Advanced/AdvancedPanel.tsx)
+**对应 UI**：[AdvancedPanel.tsx](librechat/client/src/components/SidePanel/Agents/Advanced/AdvancedPanel.tsx)
 
 ### Step 9：记录 A2 的 Agent ID
 
@@ -414,7 +414,7 @@ A1 传来的"关键参数"是抽象概念，不能直接透传给工具。**具�
 
 **示例 ID**：`a2-executor-xxxx-xxxx-xxxx`
 
-**对应 UI**：[AdvancedPanel.tsx:66-86](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Advanced/AdvancedPanel.tsx#L66)
+**对应 UI**：[AdvancedPanel.tsx:66-86](librechat/client/src/components/SidePanel/Agents/Advanced/AdvancedPanel.tsx#L66)
 
 ---
 
@@ -444,7 +444,7 @@ A1 传来的"关键参数"是抽象概念，不能直接透传给工具。**具�
 
 ## 致命歧义前置反问（⚠️ 最高优先级，仅两类才问）
 以下两种情况**必须**先调用 `ask_user_question` 让用户在 2-3 个选项里选，**不要用决策表猜测**：
-1. **主体歧义**：用户主体身份无法判定是"管理方/投资方/被投方"（如只说"拓源控股"没带"管理/投资/名下"等动词）→ 问"您是指拓源控股 ①管理的业务 ②投资的项目 ③被投资项目"；
+1. **主体歧义**：用户主体身份无法判定是"管理方/投资方/被投方"（如只说"某控股公司"没带"管理/投资/名下"等动词）→ 问"您是指某控股公司 ①管理的业务 ②投资的项目 ③被投资项目"；
 2. **对象歧义**：用户说"XX 的业务/项目"但没点名业务线，且影响范围大 → 问"您要看 ①全部业务 ②仅股权项目 ③仅商业保理 ④仅融资租赁…"。
 其余情况一律走决策表，命中即输出，禁止推敲。主体/对象任一能明确判定，就不问。
 
@@ -467,7 +467,7 @@ A1 传来的"关键参数"是抽象概念，不能直接透传给工具。**具�
 ## 下载/导出识别（⚠️ 动作修饰，不打断分类）
 - 用户含"下载/导出/Excel/CSV/保存/表格/落盘"等 → 判定为**导出意图**，但**不改变底层业务分类**：仍按上方决策表匹配"项目/基金/聚合"等，导出只是对已判定数据的动作修饰。
 - 输出时在输出格式的 `[导出]` 字段标注：用户说 Excel → `excel`；说 CSV → `csv`；未提及 → `不适用`。
-- 例："下载这146个项目数据，用excel打开" → 命中决策表第5行（"项目"）→ Project_Query；主体"拓源控股名下"→ company_name=拓源控股；`[导出] excel`。
+- 例："下载这146个项目数据，用excel打开" → 命中决策表第5行（"项目"）→ Project_Query；主体"某控股公司名下"→ company_name=某控股公司；`[导出] excel`。
 - 例："把全部业务导出成CSV" → 命中第6行（"业务"上位词）→ Aggregation_Query；`[导出] csv`。
 
 ## 多轮上下文继承（⚠️ "这些记录/上面的数据"等指代词，直接继承，不重新分类）
@@ -477,8 +477,8 @@ A1 传来的"关键参数"是抽象概念，不能直接透传给工具。**具�
 - **禁止**重新分析"这些记录"具体指什么——默认就是上一轮查询结果。
 
 ### 参数修正/澄清继承（⚠️ 用户纠正或确认参数时，直接继承，不重新分类）
-- 当用户本轮**修正/确认了某个参数**（如"公司名称为盛京资本"、"是盛京资本，不是盛京资本管理"）时 → **直接继承上一轮的分类**，**仅更新被修正的那个参数**，不重新走决策表、不重新分析实体类型。
-- 思考结论只需 1 句："继承上一轮分类，仅更新 company_name=盛京资本"。
+- 当用户本轮**修正/确认了某个参数**（如"公司名称为某资本公司"、"是某资本公司，不是某资本公司管理"）时 → **直接继承上一轮的分类**，**仅更新被修正的那个参数**，不重新走决策表、不重新分析实体类型。
+- 思考结论只需 1 句："继承上一轮分类，仅更新 company_name=某资本公司"。
 - **禁止**借澄清重新争论"这是项目还是基金"——分类不变，只改参数。
 
 ## 主体角色判定（⚠️ 决定抽取哪个主体参数，最关键）
@@ -486,8 +486,8 @@ A1 传来的"关键参数"是抽象概念，不能直接透传给工具。**具�
 
 | 用户表述模式 | 抽取参数 | 示例 |
 |------------|---------|------|
-| "XX**管理**的 / XX**名下** / XX**负责**的" | `company_name=XX` | "拓源控股管理的业务"→ company_name=拓源控股 |
-| "XX**投资**（了）/ XX**投**（了）" | `investor_name=XX` | "拓源投了哪些项目"→ investor_name=拓源 |
+| "XX**管理**的 / XX**名下** / XX**负责**的" | `company_name=XX` | "某控股公司管理的业务"→ company_name=某控股公司 |
+| "XX**投资**（了）/ XX**投**（了）" | `investor_name=XX` | "某控股公司投了哪些项目"→ investor_name=某控股公司 |
 | "投资了**XX** / 被投方**XX**" | `investee_name=XX` | |
 | "XX**基金**投的子基金" | `investor_name=XX基金` | |
 | "XX**基金**被投资了" | `investee_name=XX基金` | |
@@ -512,7 +512,7 @@ A1 传来的"关键参数"是抽象概念，不能直接透传给工具。**具�
 ## 简短思考约束（⚠️ Qwen3.6 thinking 专用，防重复，最高优先级）
 - 思考**只做一件事**：把用户问题按决策表逐行匹配找到命中行 + 按主体角色判定抽参数，**命中即止**。
 - **禁止**在思考中写"可能是…也可能是…如果…那么…让我再看看…再检查一遍"等自我怀疑/循环句式。
-- **思考结论 ≤ 1 句**，如："命中决策表第6行（管理上位词）→ Aggregation_Query；主体'拓源控股'是管理角色 → company_name=拓源控股"。
+- **思考结论 ≤ 1 句**，如："命中决策表第6行（管理上位词）→ Aggregation_Query；主体'某控股公司'是管理角色 → company_name=某控股公司"。
 - **禁止思考 A2 的职责**：A2 怎么处理、怎么下载、怎么生成文件，**不是你的事**。你只管输出分类+参数+交接。
 - **禁止纠结"是否输出查询结果"**：你的铁律是"绝不输出查询结果"，没有例外，不需要反复确认。
 - **禁止分析历史对话中的表格/数据**：那是 A2 输出的，与你无关。你只看当前用户消息。
@@ -588,7 +588,7 @@ A1 传来的"关键参数"是抽象概念，不能直接透传给工具。**具�
 
 7. 点击 **"Save"** 保存 A1
 
-**对应 UI**：[AgentHandoffs.tsx](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Advanced/AgentHandoffs.tsx)
+**对应 UI**：[AgentHandoffs.tsx](librechat/client/src/components/SidePanel/Agents/Advanced/AgentHandoffs.tsx)
 
 **UI 操作流程**：
 ```
@@ -605,7 +605,7 @@ Advanced 面板
 
 > **核实结果**：Chain 模式始终可用（chain 在默认 capabilities 中），
 > 但 **Chain UI 仅有 `agent_ids` 字段，无 prompt/description 字段**
-> （[AgentChain.tsx:56-121](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Advanced/AgentChain.tsx#L56)）。
+> （[AgentChain.tsx:56-121](librechat/client/src/components/SidePanel/Agents/Advanced/AgentChain.tsx#L56)）。
 
 1. 在 A1 的 **Advanced** 面板中找到 **"Agent Chain"** 区块
 2. 点击 **"Add Agent"** 按钮
@@ -613,7 +613,7 @@ Advanced 面板
 4. Chain 模式会自动将 A1 的输出作为 A2 的输入
 5. 点击 **"Save"** 保存 A1
 
-**对应 UI**：[AgentChain.tsx](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Advanced/AgentChain.tsx)
+**对应 UI**：[AgentChain.tsx](librechat/client/src/components/SidePanel/Agents/Advanced/AgentChain.tsx)
 
 > **两种模式的区别**：
 > - **Handoff 模式**（推荐）：支持配置 `description` + `prompt` + `promptKey` 字段
@@ -639,7 +639,7 @@ Advanced 面板
 
 ```bash
 # 测试 MCP 服务可达性
-curl -X POST http://10.0.11.6:8080/mcp \
+curl -X POST http://10.0.0.5:8080/mcp \
   -H "Authorization: Bearer dev_token_123" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
@@ -699,18 +699,18 @@ curl -X POST http://10.0.11.6:8080/mcp \
 | E2E-001 | `退出金额最大的 10 个股权项目` | Project_Query | 直接 query_project（exit_amount 不在 dwd_all_biz） |
 | E2E-002 | `查一下委托贷款的明细` | Project_Query | 直接 query_project（明细类，docstring 禁止 query_all_biz 查具体项目列表） |
 | E2E-003 | `基金规模 TOP 5` | Fund_Query | 直接 query_fund（基金规模不在 dwd_all_biz） |
-| E2E-004 | `查一下沈阳产业基金的详情` | Fund_Query | 直接 query_fund（基金详情/阶段不在 dwd_all_biz） |
+| E2E-004 | `查一下某产业基金的详情` | Fund_Query | 直接 query_fund（基金详情/阶段不在 dwd_all_biz） |
 | E2E-005 | `子基金退出金额排行` | Subfund_Query | 直接 query_subfund（退出金额不在 dwd_all_biz） |
-| E2E-006 | `沈阳金控的子基金有哪些` | Subfund_Query | query_all_biz → query_subfund |
+| E2E-006 | `某金控公司的子基金有哪些` | Subfund_Query | query_all_biz → query_subfund |
 | E2E-007 | `LP 出资金额 TOP 10` | Relation_Query | query_all_biz → query_lp2fund |
 | E2E-008 | `基金投资了哪些项目` | Relation_Query | query_all_biz → query_fund2proj |
 | E2E-009 | `按业务线分组统计投资金额` | Aggregation_Query | query_all_biz → stat_group_by_tool |
 | E2E-010 | `退出金额超过 1000 万的股权项目` | Project_Query | 直接 query_project（exit_amount 不在 dwd_all_biz） |
-| E2E-011 | `市投资基金→沈阳都市圈基金→数据集团这层关系怎么投的？` | Relation_Query | **防拼接核实**：逐跳调用 query_all_biz(investor_name=市投资基金) 确认 X→Y；再 query_all_biz(investor_name=沈阳都市圈基金) 确认 Y→Z → 后者返回 `total:0`，整条链不得输出，只能如实说明"市投资直接投了数据集团，也投了沈阳都市圈基金，但未查到沈阳都市圈基金再投数据集团" |
+| E2E-011 | `某市投资基金→某都市圈基金→某数据集团这层关系怎么投的？` | Relation_Query | **防拼接核实**：逐跳调用 query_all_biz(investor_name=某市投资基金) 确认 X→Y；再 query_all_biz(investor_name=某都市圈基金) 确认 Y→Z → 后者返回 `total:0`，整条链不得输出，只能如实说明"市投资直接投了某数据集团，也投了某都市圈基金，但未查到某都市圈基金再投某数据集团" |
 | E2E-012 | `查询投资金额较大的 30 个项目（验证分页）` | Relation_Query | query_all_biz(limit=200) → 输出时强制附 `total`、当前页范围、当前页/总页数、是否还有更多 |
 | E2E-013 | `列出所有子基金的信息`（或触发"下一页"翻页） | Subfund_Query | query_all_biz → query_subfund → **验证输出是否重复**：A2 只应输出**一次**结果，不得出现两段相同内容 |
 | E2E-014 | `列出所有子基金的信息`（翻页到第 2/3 页） | Subfund_Query | **验证翻页真实性**：A1 应输出 `limit: 200` 一次取全避免翻页；若翻页，A2 必须重新调用工具（offset>0），且第 2/3 页数据不得与第 1 页重复、不得出现"实际执行中将调用/占位符"等模拟说明 |
-| E2E-015 | `查询市投资基金投资的项目、基金和子基金`，随后追问（如"另一家公司呢"） | Aggregation_Query | **验证追问必重查**：每次追问 A2 必须**重新调用 MCP 工具**获取最新数据，不得复用历史上下文中旧的工具结果；输出不得出现"根据您的查询，我已为您调取了..."等模拟/复用表述，且不得有两段相同输出 |
+| E2E-015 | `查询某市投资基金投资的项目、基金和子基金`，随后追问（如"另一家公司呢"） | Aggregation_Query | **验证追问必重查**：每次追问 A2 必须**重新调用 MCP 工具**获取最新数据，不得复用历史上下文中旧的工具结果；输出不得出现"根据您的查询，我已为您调取了..."等模拟/复用表述，且不得有两段相同输出 |
 | E2E-016 | `把原引导基金的投资分布画成关系图` | Aggregation_Query | **验证 mermaid 图**：A2 可输出 mermaid 关系图（graph），但图中每个节点/关系/数值必须来自工具真实返回的 `data`，禁止编造节点或关系 |
 | E2E-017 | `查询一个不存在投资方/无法确定意图的问题`（连续 3 轮歧义） | UNCLEAR | **验证循环终止**：A1 澄清 3 轮仍无法确定即输出 `UNCLEAR` 终止并告知用户；A2 同一查询重试 2 次仍失败即终止，**不得**无休止换参数重试或重新分类 |
 
@@ -769,8 +769,8 @@ curl -X POST http://10.0.11.6:8080/mcp \
 | A2 工具调用 403 | IP 白名单 | 检查 mcpSettings.allowedAddresses |
 | Chain 模式不可用 | 极低概率 | chain 在默认 capabilities 中，如不可用检查 LibreChat 版本是否支持 |
 | end_after_tools 无法配置 | 已知限制 | UI 无开关，通过 API 设置：`PATCH /api/agents/{id}` `{"end_after_tools": true}` |
-| Gemma4 重复提问 | recursion_limit 未生效 | 确认 A1 的 recursion_limit 设置为 3 |
-| Gemma4 重复调用工具 | end_after_tools 未生效 | 在 A2 Prompt 中强化防重规则 |
+| qwen3.6-35B 重复提问 | recursion_limit 未生效 | 确认 A1 的 recursion_limit 设置为 3 |
+| qwen3.6-35B 重复调用工具 | end_after_tools 未生效 | 在 A2 Prompt 中强化防重规则 |
 | execute_code 报 `request to https://api.librechat.ai/v1/exec failed` | LibreChat 默认指向官方闭源沙箱，内网不可达 | 部署本地 code-command 沙箱并配置 `LIBRECHAT_CODE_BASEURL`（见阶段六） |
 
 ---
@@ -820,7 +820,7 @@ curl http://localhost:8095/health
 
 ### 6.2 配置 LibreChat 指向本地沙箱
 
-在 LibreChat 的 `.env` 追加（已完成，见[.env](file:///c:/Users/wonder/trae-projects/LibreChat/.env#L1155-L1163)）：
+在 LibreChat 的 `.env` 追加（已完成，见[.env](librechat/.env#L1155-L1163)）：
 
 ```env
 # code-command 跑在宿主机，LibreChat 容器经 host.docker.internal 访问
@@ -857,19 +857,19 @@ actions:
     - 'swapi.dev'
     - 'librechat.ai'
     - 'google.com'
-    - 'http://10.0.11.6:8080/mcp'
-    - 'http://10.0.11.6:8017/mcp'
+    - 'http://10.0.0.5:8080/mcp'
+    - 'http://10.0.0.5:8017/mcp'
 
 # 1. MCP 服务配置（取消注释）
 mcpSettings:
   allowedAddresses:
-    - '10.0.11.6:8080'
-    - '10.0.11.6:8017'
+    - '10.0.0.5:8080'
+    - '10.0.0.5:8017'
 
 mcpServers:
   inv-mcp:
     type: streamable-http
-    url: http://10.0.11.6:8080/mcp
+    url: http://10.0.0.5:8080/mcp
     timeout: 60000
     headers:
       Authorization: "Bearer dev_token_123"
@@ -884,11 +884,11 @@ mcpServers:
 # 3. Endpoint 配置（已就绪，无需修改）
 endpoints:
   custom:
-    - name: "Gemma-4-Local"
-      apiKey: "sk-local-gemma"
-      baseURL: "http://10.0.11.6:8005/v1"
+    - name: "Qwen-3.6-Local"
+      apiKey: "sk-local-qwen"
+      baseURL: "http://10.0.0.5:8005/v1"
       models:
-        default: ["gemma-4-26B-A4B-it"]
+        default: ["qwen3.6-35B"]
         fetch: true
       capabilities:
         - files
@@ -902,8 +902,8 @@ endpoints:
 ### A2 执行器创建检查清单
 
 - [ ] Name 填写为"投资数据执行器"
-- [ ] Provider 选择 Gemma-4-Local
-- [ ] Model 选择 gemma-4-26B-A4B-it
+- [ ] Provider 选择 Qwen-3.6-Local
+- [ ] Model 选择 qwen3.6-35B
 - [ ] Instructions 粘贴完整 Prompt（设计文档 §5.2，**指导说明版**）
 - [ ] Skills 挂载 `investment-dwd-query`（业务逻辑 Skill）
 - [ ] Tools 挂载 10 个 MCP 工具
@@ -914,8 +914,8 @@ endpoints:
 ### A1 领导版创建检查清单
 
 - [ ] Name 填写为"投资意图路由器-领导版"
-- [ ] Provider 选择 Gemma-4-Local
-- [ ] Model 选择 gemma-4-26B-A4B-it
+- [ ] Provider 选择 Qwen-3.6-Local
+- [ ] Model 选择 qwen3.6-35B
 - [ ] Instructions 粘贴完整 Prompt（设计文档 §5.1）
 - [ ] Tools 保持为空（不挂任何工具）
 - [ ] Advanced 面板设置 recursion_limit = 3
@@ -930,14 +930,14 @@ endpoints:
 
 | 操作 | 导航路径 | 对应组件 |
 |------|---------|---------|
-| 创建 Agent | 侧边栏 → Agents → Create Agent | [AgentConfig.tsx](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/AgentConfig.tsx) |
-| 配置 Tools | Agent 编辑页 → Tools 区域 → Add Tool | [ToolsSection.tsx](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Tools/ToolsSection.tsx) |
+| 创建 Agent | 侧边栏 → Agents → Create Agent | [AgentConfig.tsx](librechat/client/src/components/SidePanel/Agents/AgentConfig.tsx) |
+| 配置 Tools | Agent 编辑页 → Tools 区域 → Add Tool | [ToolsSection.tsx](librechat/client/src/components/SidePanel/Agents/Tools/ToolsSection.tsx) |
 | 配置 Instructions | Agent 编辑页 → Instructions 区域 | Instructions.tsx |
-| 进入 Advanced | Agent 编辑页 → Advanced 按钮 | [AdvancedPanel.tsx](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Advanced/AdvancedPanel.tsx) |
-| 配置 recursion_limit | Advanced → Essentials → Max Agent Steps | [MaxAgentSteps.tsx](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Advanced/MaxAgentSteps.tsx) |
-| 配置 Handoff | Advanced → Orchestration → Agent Handoffs | [AgentHandoffs.tsx](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Advanced/AgentHandoffs.tsx) |
-| 配置 Chain | Advanced → Orchestration → Agent Chain | [AgentChain.tsx](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Advanced/AgentChain.tsx) |
-| 复制 Agent ID | Advanced → 底部 Agent ID → 复制按钮 | [AdvancedPanel.tsx:66-86](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Advanced/AdvancedPanel.tsx#L66) |
+| 进入 Advanced | Agent 编辑页 → Advanced 按钮 | [AdvancedPanel.tsx](librechat/client/src/components/SidePanel/Agents/Advanced/AdvancedPanel.tsx) |
+| 配置 recursion_limit | Advanced → Essentials → Max Agent Steps | [MaxAgentSteps.tsx](librechat/client/src/components/SidePanel/Agents/Advanced/MaxAgentSteps.tsx) |
+| 配置 Handoff | Advanced → Orchestration → Agent Handoffs | [AgentHandoffs.tsx](librechat/client/src/components/SidePanel/Agents/Advanced/AgentHandoffs.tsx) |
+| 配置 Chain | Advanced → Orchestration → Agent Chain | [AgentChain.tsx](librechat/client/src/components/SidePanel/Agents/Advanced/AgentChain.tsx) |
+| 复制 Agent ID | Advanced → 底部 Agent ID → 复制按钮 | [AdvancedPanel.tsx:66-86](librechat/client/src/components/SidePanel/Agents/Advanced/AdvancedPanel.tsx#L66) |
 
 ---
 
@@ -971,14 +971,14 @@ endpoints:
 
 | 文件 | 作用 | 关键行号 |
 |------|------|---------|
-| [librechat.yaml](file:///c:/Users/wonder/trae-projects/LibreChat/librechat.yaml) | 主配置文件 | L273-280（actions.allowedDomains）、L344-358（MCP）、L406-431（agents）、L528-542（Endpoint） |
-| [AgentConfig.tsx](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/AgentConfig.tsx) | Agent 创建/编辑主界面 | L61-86（name）、L107-150（model） |
-| [ToolsSection.tsx](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Tools/ToolsSection.tsx) | 工具挂载 UI | L266-375 |
-| [AdvancedPanel.tsx](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Advanced/AdvancedPanel.tsx) | 高级设置面板 | L15-91 |
-| [OrchestrationHub.tsx](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Advanced/OrchestrationHub.tsx) | 编排中心（Chain/Handoff/Subagents） | L21-65 |
-| [MaxAgentSteps.tsx](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Advanced/MaxAgentSteps.tsx) | recursion_limit 配置 | L8-54 |
-| [AgentHandoffs.tsx](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Advanced/AgentHandoffs.tsx) | Handoff 配置 UI | L32-79 |
-| [AgentChain.tsx](file:///c:/Users/wonder/trae-projects/LibreChat/client/src/components/SidePanel/Agents/Advanced/AgentChain.tsx) | Chain 配置 UI | L29-123 |
+| [librechat.yaml](librechat/librechat.yaml) | 主配置文件 | L273-280（actions.allowedDomains）、L344-358（MCP）、L406-431（agents）、L528-542（Endpoint） |
+| [AgentConfig.tsx](librechat/client/src/components/SidePanel/Agents/AgentConfig.tsx) | Agent 创建/编辑主界面 | L61-86（name）、L107-150（model） |
+| [ToolsSection.tsx](librechat/client/src/components/SidePanel/Agents/Tools/ToolsSection.tsx) | 工具挂载 UI | L266-375 |
+| [AdvancedPanel.tsx](librechat/client/src/components/SidePanel/Agents/Advanced/AdvancedPanel.tsx) | 高级设置面板 | L15-91 |
+| [OrchestrationHub.tsx](librechat/client/src/components/SidePanel/Agents/Advanced/OrchestrationHub.tsx) | 编排中心（Chain/Handoff/Subagents） | L21-65 |
+| [MaxAgentSteps.tsx](librechat/client/src/components/SidePanel/Agents/Advanced/MaxAgentSteps.tsx) | recursion_limit 配置 | L8-54 |
+| [AgentHandoffs.tsx](librechat/client/src/components/SidePanel/Agents/Advanced/AgentHandoffs.tsx) | Handoff 配置 UI | L32-79 |
+| [AgentChain.tsx](librechat/client/src/components/SidePanel/Agents/Advanced/AgentChain.tsx) | Chain 配置 UI | L29-123 |
 
 ---
 
