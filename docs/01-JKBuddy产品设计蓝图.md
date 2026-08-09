@@ -163,6 +163,111 @@ JKBuddy 采用现成 Agent 工具（LibreChat）作为底座，而非从零自�
 - **身份伪造**：MCP 信任客户端自报 loginName → 越权。对策：仅信任 LibreChat 服务端注入的认证上下文，MCP 中间件校验会话有效（06 §4.6）。
 - **工具暴露面过大**：MCP 工具注册过多 → 模型误用。对策：按 Agent 收敛 `allowed-tools` + 工具 docstring 声明边界（04 本体边界）。
 
+### 3.1 受控的智能体接入层：网关统一调度 + 本体注入（扩展设计）
+
+**定位**：JKBuddy 作为"受控的智能体接入层"，本质是一个**受控网关**——所有请求经统一入口进入，经鉴权、本体语义注入、意图路由后，分派给对应 Agent，再由 Agent 经受控 MCP 工具访问若依。本小节以简化的伪代码与调用链展示这一"网关统一调度 + 本体注入"机制。
+
+**核心不变量（接入层铁律）**：
+1. **单入口**：一切 Agent 调用都从网关入口进入，无旁路。
+2. **身份服务端解析**：loginName → sys_user 由网关/MCP 服务端解析，客户端不报身份。
+3. **本体注入**：每个 Agent 会话注入其所属领域的本体上下文（platform 共享 + domain 领域），语义有单一事实源（见 07）。
+4. **数据权限判定收敛在若依**：网关/Agent/MCP 不做分类识别，仅透传已认证身份（06 核心原则）。
+5. **工具受控**：Agent 只能经 `allowed-tools` 收敛后的 MCP 工具访问能力，不直连业务库。
+
+**架构草图（受控网关形态）**：
+```
+                  ┌─────────────────────────────────────────────┐
+  用户请求 ──────▶│   JKBuddy 受控接入层网关（Gateway）            │
+                  │  · 鉴权（loginName → sys_user）              │
+                  │  · 会话上下文（identity + domain）            │
+                  │  · 本体注入（platform + domain 语义段）       │
+                  │  · 意图路由（A1 分类器）                      │
+                  └──────────────┬──────────────────────────────┘
+                                 │ 路由分发（按 L0/L1 分类）
+        ┌────────────┬───────────┼───────────┬─────────────┐
+        ▼            ▼           ▼           ▼             ▼
+      A2 数据      A3 系统     A4 导出     A5 审批      A6 协同
+      执行器        处理        沙箱        处理          协同
+        │            │           │           │             │
+        └────────────┴───────────┼───────────┴─────────────┘
+                                 ▼  受控 MCP 工具（allowed-tools 收敛）
+                          ┌──────────────────────────────┐
+                          │  MCP Server（每业务系统独立）    │
+                          │  · 身份透传（仅 loginName）     │
+                          └──────────────┬───────────────┘
+                                         ▼ REST（身份+业务参数）
+                          ┌──────────────────────────────┐
+                          │  若依：@PreAuthorize + @DataScope │
+                          │  （数据权限判定收敛在此）         │
+                          └──────────────────────────────┘
+```
+
+**伪代码（网关统一调度 + 本体注入，示意）**：
+
+```python
+# JKBuddy 受控接入层网关 —— 简化示意伪代码
+# 不变量：单入口 / 身份服务端解析 / 本体注入 / 权限判定在若依 / 工具受控
+
+class BuddyGateway:
+    """受控的智能体接入层网关：统一调度多个 Agent 并注入本体语义。"""
+
+    def __init__(self, ontology_registry, agent_registry, mcp_gateway):
+        self.ontology_registry = ontology_registry   # 本体注册表（platform + domain）
+        self.agent_registry   = agent_registry       # Agent 注册表（A1-A6）
+        self.mcp_gateway      = mcp_gateway          # 受控 MCP 工具网关（allowed-tools 收敛）
+
+    def handle(self, request):
+        # ── 1. 鉴权（服务端解析身份，客户端不自报）──
+        identity = self._resolve_identity(request.loginName)   # loginName → sys_user，校验存在/启停
+        if identity is None:
+            return 401
+
+        # ── 2. 本体语义注入：为本次会话装配 platform + 所属领域本体 ──
+        domain = self._detect_domain(request)                  # 由请求/历史判定业务域（投资/资产…）
+        ontology = self.ontology_registry.merge("platform", domain)
+        # 注入到会话上下文：Agent 的指令/Skill 引用本体生成的人读投影，机读白名单进 MCP
+
+        # ── 3. 意图路由：A1 纯分类器（零工具）──
+        route = self.agent_registry["A1"].classify(request.text, ontology=ontology)
+        # route = {L0, L1, params, target_agent}；A1 只输出结构化分类，不做查询
+
+        # ── 4. 分派下游 Agent（交接契约：恰一次、之后停止，见 05）──
+        agent = self.agent_registry[route.target_agent]
+        result = agent.run(
+            request=request,
+            identity=identity,          # 仅透传已认证身份（不报 data_scope）
+            ontology=ontology,          # 注入本体语义
+            tools=self._allowed_tools(agent),   # 该 Agent 收敛后的 MCP 工具集
+        )
+
+        # ── 5. 受控执行：Agent 仅经 allowed-tools 调 MCP，MCP 透传身份到若依判定 ──
+        # 数据权限判定收敛在若依（@PreAuthorize + @DataScope），网关/Agent 不做分类识别
+        return self._to_response(result, identity, route)
+
+    def _allowed_tools(self, agent):
+        """按 Agent 收敛 MCP 工具：MCP 工具是'业务能力点'，不是'模型自由调用点'。"""
+        return [t for t in self.mcp_gateway.tools() if t in agent.allowed_tools]
+```
+
+**调用链（一次查询）**：
+```
+用户 → Gateway.handle(loginName, text)
+  → resolve_identity(loginName) ── 服务端解析身份
+  → merge_ontology(platform + domain) ── 注入本体语义
+  → A1.classify(text, ontology) ── 意图路由（L0/L1/参数/target_agent）
+  → A2.run(text, identity, ontology, allowed_tools) ── 数据执行
+      → mcp_gateway.invoke(tool, identity, params) ── 受控工具调用，仅透传身份
+          → RuoYi: @PreAuthorize + @DataScope ── 数据权限判定（收敛在此）
+      → 返回受控数据
+  → 网关封装响应（含数据来源/条数/时间戳）
+```
+
+**该设计如何体现"受控"**：
+- **身份受控**：身份解析与服务端，客户端不可伪造（防越权）。
+- **语义受控**：本体注入让 Agent 的认知有单一事实源，非模型自由臆测。
+- **权限受控**：数据权限判定完全收敛在若依，接入层只透传（口径不漂移）。
+- **工具受控**：`allowed-tools` 收敛 + MCP 为唯一能力边界，Agent 不直连业务库。
+
 ---
 
 ## 4. 多 Agent 系统实现架构
