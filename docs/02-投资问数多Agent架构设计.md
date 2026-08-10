@@ -306,6 +306,8 @@
 
 ## 六、数据流示例
 
+> ⚠️ **以下示例为示意输出，非真实查询结果**。所列数值（如"有色金属 5,405.36""投资金额 3800 万元""退出周期约 2 年"等）仅用于展示 A1/A2 的交互格式与角色感知输出形态，不代表系统实际产出的查询数据。同步至公开仓库时已做脱敏处理。
+
 ### 6.1 场景一：领导简单查询
 
 **用户输入**："最近哪个股权项目退出金额最大？"
@@ -536,8 +538,8 @@
 
 | 风险 ID | 风险描述 | 影响 | 概率 | 缓解措施 |
 |---------|---------|------|------|---------|
-| R1 | qwen3.6-35B 在 A2 阶段重复调用同一工具 | 响应延迟、资源浪费 | 高 | `end_after_tools=true` + Prompt 显式禁止 + 用户监督 |
-| R2 | qwen3.6-35B 在 A1 阶段重复提问 | 用户体验下降 | 高 | `recursion_limit=3` + Prompt 强制"同一参数最多提问一次" |
+| R1 | qwen3.6-35B 在 A2 阶段重复调用同一工具 | 响应延迟、资源浪费 | 高（依赖弱模型，需持续监控） | `end_after_tools=true` + Prompt 显式禁止 + **Hook 机制（pre-call 参数去重拦截）** + 用户监督（见 [01 §2.1a](01-JKBuddy产品设计蓝图.md)） |
+| R2 | qwen3.6-35B 在 A1 阶段重复提问 | 用户体验下降 | 高（依赖弱模型，需持续监控） | `recursion_limit=3` + Prompt 强制"同一参数最多提问一次" + **多轮对话状态跟踪（已提问参数去重）**（见 [01 §2.1a](01-JKBuddy产品设计蓝图.md)） |
 | R3 | A1 输出格式不规范导致 A2 无法识别 | A2 执行失败 | 中 | A1 Prompt 给出严格格式示例 + A2 Prompt 容错处理 |
 | R4 | Chain 传递上下文过长导致性能下降 | 响应超时 | 低 | 设置 `recursion_limit` + A2 Prompt 聚焦关键信息 |
 | R5 | MCP 服务认证失败（401/403） | A2 工具调用失败 | 低 | 参见 project_memory.md 的认证配置规范 |
@@ -600,7 +602,7 @@
 
 - [librechat.yaml](librechat/librechat.yaml) - LibreChat 主配置文件
 - [mcp-inv-server-v2](mcp-inv-server-v2) - MCP 服务端项目
-- (本仓库不含内部记忆)
+- project_memory.md - 历史教训记录
 - [dwd_views.sql](mcp-inv-server-v2/sql/dwd_views.sql) - DWD 视图定义
 - [AgentChain.tsx](librechat/client/src/components/SidePanel/Agents/Advanced/AgentChain.tsx) - Chain UI 组件
 - [chain.ts](librechat/packages/api/src/agents/chain.ts) - Chain 执行逻辑

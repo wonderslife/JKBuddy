@@ -116,6 +116,33 @@ MCP Server（资产系统 MCP Server，协议适配层）
 3. MCP 仅把**已认证身份（loginName）**透传给若依；**禁止客户端自报 user_id / data_scope**。
 4. 用户身份映射与数据权限判定，全部由**若依服务端**依据其会话中的当前登录用户完成。
 
+### 4.2a 身份传递技术方案（MCP → 若依 REST）⚠️ 需技术验证（spike）
+
+> **问题背景**：MCP Server 是独立服务，若依基于 session/JWT 鉴权，两者会话不共享。MCP 调用若依 REST 时，如何让若依识别"当前登录用户"是本方案的技术核心，**尚未验证**，需 spike 确认。
+
+**方案 A：MCP 持有若依 service account + 透传 loginName（推荐先行验证）**
+
+- MCP 持有一个若依颁发的 **service account**（专用服务账号 + API Key / 长期 token），以 service 身份调用若依 REST。
+- MCP 在请求中**透传 loginName 作为业务参数**（如 HTTP Header `X-Acting-User: <loginName>`），若依端收到后**模拟该用户**进行 `@PreAuthorize` + `@DataScope` 判定。
+- 若依侧需新增"service 模拟用户"通道：service 账号有权限模拟任意用户，但**仅用于判定数据范围**，不绕过 `@DataScope`。
+- **优点**：MCP 无需管理用户级 JWT 生命周期；service account 可审计。
+- **风险**：若依需改造以支持"模拟用户"语义；service account 权限须严格收敛（仅模拟判定，不可提权）。
+
+**方案 B：MCP 通过 SSO 获取可被若依识别的 JWT**
+
+- MCP 接收 LibreChat 透传的 SSO token（或用 service account 向 SSO 换取 on-behalf-of 用户的 JWT），调用若依 REST 时携带该 JWT。
+- 若依已集成蓝凌 SSO，可直接校验 JWT 并识别用户身份。
+- **优点**：无需若依改造"模拟用户"通道；身份链路与 SSO 一致。
+- **风险**：token 生命周期管理复杂（过期/刷新）；on-behalf-of 流程依赖蓝凌 SSO 是否支持；MCP 需缓存/刷新 token。
+
+**Spike 验证清单**：
+1. 蓝凌 SSO 回调的 loginName 能否与若依 `sys_user.user_name` **精确匹配**（大小写、前缀差异）。
+2. 若依是否原生支持"service account 模拟用户"或需改造（评估方案 A 改造成本）。
+3. 蓝凌 SSO 是否支持 on-behalf-of token 交换（评估方案 B 可行性）。
+4. 两种方案下 `@DataScope` 能否正确依据被模拟用户判定数据范围（核心验收点）。
+
+> ⚠️ **在 spike 完成前，本文档 §4.3-§4.5 的数据权限判定链路为设计预期，未经端到端验证。**
+
 ### 4.3 数据权限判定（由若依服务端负责）
 
 **核心原则**：数据权限上下文**由若依服务自行判断，agent 端（A1/A2）与 MCP 均不做任何数据权限的分类识别**。

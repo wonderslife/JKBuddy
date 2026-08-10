@@ -53,7 +53,7 @@ JKBuddy 采用现成 Agent 工具（LibreChat）作为底座，而非从零自�
 
 | 视角 | 自建的理由（反方） | 复用的理由（正方） | 判词 |
 |------|------|------|------|
-| 时间成本 | 无外部依赖、完全可控 | 多 Agent 编排/会话/记忆/MCP/安全/前端 UI 均为海量轮子，自建需数月~数年且持续维护 | 复用压倒性胜出 |
+| 时间成本 | 无外部依赖、完全可控 | 多 Agent 编排/会话/记忆/MCP/安全/前端 UI 均为海量轮子，自建需**多 Agent 编排引擎 + 会话管理 + 记忆系统 + MCP 协议层 + 前端 UI + 安全治理等至少 6 个子系统**且持续维护 | 复用压倒性胜出 |
 | 成熟度 | 无历史包袱 | Chain/Handoff、MCP、记忆、沙箱已被社区大量验证 | 复用胜出 |
 | 定制自由度 | 完全掌控，不受 §11 受限点约束 | 受限点可通过升级/迁移到更完整平台解决（见 §11 与 08） | 受限点不构成自建理由 |
 | 安全可控 | 代码全自研、审计彻底 | 开源可审计 + 企业定制层自研 | 平手，靠定制层保障 |
@@ -87,6 +87,90 @@ JKBuddy 采用现成 Agent 工具（LibreChat）作为底座，而非从零自�
   - 多轮澄清是否仍会重复提问 → 保留 `recursion_limit` 硬限制与 `end_after_tools=true`（02/05 已固化）；
   - 本地推理延迟对并发的影响（见 §9）。
 - 模型能力与具体微调细节不在本蓝图臆测范围，落地时以实测为准。
+
+### 2.1a qwen3.6-35B function calling 稳定性增强方案（基于现有模型）
+
+> **约束**：当前仅 qwen3.6-35B 可本地部署运行，模型升级不可作为短期选项（02 §11.2 保留为中期评估方向）。以下方案均基于**现有模型**，通过工程手段补充调用稳定性。
+
+#### 问题辩证：弱模型的 function calling 有两个不同的问题
+
+现有防线（`end_after_tools` + `recursion_limit` + prompt 约束）均为配置级 / prompt 级，弱模型在复杂场景下仍可能突破。但在此之前，需先区分**两个本质不同的问题**——它们的解法不同，混为一谈会导致防线错位：
+
+| 问题 | 表现 | 根因 | 解法方向 |
+|------|------|------|---------|
+| **问题 A：调用了就正确 / 不重复**（调用质量） | 模型调了工具，但重复调、参数错、吞异常 | 模型遗忘 / 参数漂移 | **工具链路拦截**（Hook + 状态跟踪） |
+| **问题 B：必须调用**（该调不调） | 模型该调工具却跳过，直接凭记忆编造答案 | 模型"偷懒" / 自信越界 | **调用强制 + 输出校验**（tool_choice + response hook） |
+
+> **关键辩证**：Hook 是"工具调用链路上的拦截器"，它的触发前提是**模型已发起了工具调用**。如果模型根本不调用工具（问题 B），Hook 永远不会触发——**Hook 解决问题 A，不解决问题 B**。确保"必须调用"需要的是输出层的强制机制，不是工具层的 Hook。两者互补，不重叠。
+
+#### 问题 A 的防线：调用质量（Hook + 状态跟踪 + 结构性双保险）
+
+| 层 | 机制 | 说明 | 落地位置 |
+|----|------|------|---------|
+| **A1. Hook 机制（工具调用拦截器）** | pre-call hook + post-call hook | **pre-call**：工具调用前校验参数（必填项、类型、取值范围、同会话是否已调用过相同参数组合→拒绝重复）；**post-call**：工具返回后校验结果（空数据不重试、异常不静默吞、结果结构合规） | MCP Server 中间件层（`mcp-inv-server-v2`） |
+| **A2. 多轮对话状态跟踪** | 会话级工具调用日志 | 在会话上下文中维护"已调用工具 + 参数"清单，A2 每次调用前比对：若参数组合已存在→跳过并引用上次结果，防止模型遗忘导致的重复调用 | LibreChat 会话上下文 / MCP 中间件 |
+| **A3. 结构性双保险（已有，强化标注）** | `end_after_tools=true` + `recursion_limit` | API 层 `end_after_tools` 在工具调用后立即终止 Agent 循环；`recursion_limit=3` 硬限制澄清轮数。**这两项是 prompt 约束的结构性兜底**，不依赖模型自觉 | librechat.yaml Agent 配置 |
+
+#### 问题 B 的防线：必须调用（tool_choice + 输出校验 + 指令清单）
+
+| 层 | 机制 | 说明 | 强度 | 落地位置 |
+|----|------|------|------|---------|
+| **B1. `tool_choice: 'required'`**（首选） | API 层强制 | OpenAI API 标准：`tool_choice` 可设 `"auto"`（自主）/ `"required"`（强制每轮必须调至少一个工具）/ 指定特定工具。对 A2 设 `'required'` → 结构性保证每轮必调工具 | 结构性（最强） | LibreChat Agent run 参数（见下方验证点） |
+| **B2. 输出校验（response hook）** | 回复后校验 + 重试 | A2 生成回复后、返回用户前，校验本轮是否有工具调用记录；若该场景应有却无 → 拒绝输出，注入"你必须调用 xxx 工具"的 system message 重试（限 N 次） | 结构性 | LibreChat Agent Chain 后置校验步骤 |
+| **B3. 指令强制清单** | Instruction 显式声明 | A2 Instruction 中加入"涉及任何具体数值/数据查询时必须调用工具，禁止凭记忆回答"等硬性条款 + few-shot 正例 | prompt 级（弱模型可能违反） | Agent Instruction |
+
+**B1 验证点（spike）**：
+- LibreChat 代码已将 `tool_choice` 列为 call-time 透传参数（[llm.ts:53](librechat/packages/api/src/endpoints/openai/llm.ts#L53)），但 Responses API 路径硬编码 `tool_choice: 'auto'`（[handlers.ts:144](librechat/packages/api/src/agents/responses/handlers.ts#L144)），且 Agent 类型定义（[agents.ts](librechat/packages/data-provider/src/types/agents.ts)）**未暴露** per-agent 配置项。
+- 需验证：① qwen3.6-35B 的 API endpoint 是否支持 `tool_choice: 'required'`；② 若支持，需改 LibreChat 代码让 A2 的 run 携带该参数（`packages/api/src/agents/` 初始化逻辑中按 agent 注入）。
+- **反向对照**：A1（零工具分类器）的"禁止调用工具"已用 `tools=[]`（空工具列表）结构性保障——比 `tool_choice: 'none'` 更彻底。A2 需要的是对偶的 `tool_choice: 'required'`。
+
+**B2 输出校验伪代码**：
+
+```
+A2 生成回复 → [输出校验器] 检查本轮是否有工具调用记录
+   → 有工具调用 → 放行返回用户
+   → 无工具调用（该场景应调用却没调）
+       → 拒绝输出，注入 system message：
+         "你必须调用 query_xxx 工具获取数据，禁止凭记忆回答"
+       → 重试（限 N 次，超过则返回"未能获取数据"兜底）
+```
+
+#### 完整定位对照（A + B 互补，不重叠）
+
+| 层 | 解决的问题 | 机制 | 强度 |
+|----|-----------|------|------|
+| **B1 `tool_choice: 'required'`** | 必须调用（该调不调） | API 层强制 | 结构性（最强） |
+| **B2 输出校验（response hook）** | 没调用就重试 | 回复后校验 + 注入重试 | 结构性 |
+| **B3 指令强制清单** | 引导调用 | prompt 约束 | prompt 级（弱模型可能违反） |
+| **A1 Hook（pre/post-call）** | 调用了就正确 / 不重复 | 工具链路拦截 | 结构性（不解决"不调用"） |
+| **A2 状态跟踪** | 调用了就不重复 | 会话级参数去重 | 结构性 |
+| **A3 `end_after_tools` + `recursion_limit`** | 调用后即止 / 澄清有限 | API 层硬限制 | 结构性 |
+
+#### Hook 机制详细设计（问题 A 核心）
+
+```
+工具调用链路：
+  Agent → MCP.invoke(tool, params)
+    → [pre-call hook] 校验 params：
+        · 必填项完整性
+        · 参数类型 / 取值范围
+        · (session_id, tool, params_hash) 是否已存在 → 存在则拒绝（返回上次结果）
+    → 执行工具
+    → [post-call hook] 校验 result：
+        · 空结果 → 标记"无数据"，禁止 Agent 重试
+        · 异常 → 转换为结构化错误，禁止 Agent 静默吞
+        · 结构合规 → 放行
+    → 返回给 Agent
+```
+
+> **Hook 的正确定位**：Hook 是**服务端结构性防线**（MCP 层强制，模型无法绕过），但它只解决**问题 A（调用质量）**——拦截重复调用与非法参数。**问题 B（必须调用）** 由 `tool_choice` + 输出校验 + 指令清单三层解决。六层防线叠加后，即使 qwen3.6-35B 突破 prompt 约束，Hook 在服务端拦截调用质量、`tool_choice` 在 API 层强制调用、输出校验在回复层兜底重试。详见 [02 §10.1 R1/R2](02-投资问数多Agent架构设计.md) 风险缓解措施更新。
+
+#### 落地顺序
+
+1. **先 spike B1**：验证 qwen3.6-35B endpoint 是否支持 `tool_choice: 'required'`（最快见效，若支持则问题 B 第 1 层直接到位）。
+2. **B1 不可用时上 B2**：在 LibreChat Agent Chain 中为 A2 后接轻量输出校验步骤。
+3. **同步强化 B3**：A2 Instruction 补充强制工具调用清单 + few-shot 正例。
+4. **A 层照常落地**：Hook（pre/post-call）+ 状态跟踪 + `end_after_tools`，管"调用质量"。
 
 ### 2.2 本体设计原则
 
