@@ -1,0 +1,42 @@
+services:
+  code-command:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: code-command:latest
+    container_name: code-command
+    ports:
+      - "8095:8095"
+    environment:
+      - CODE_API_KEY=
+      - CODE_WORK_DIR=/tmp/code_command
+      - SHARED_ASSETS_PATH=/app/shared_assets
+      - CODE_EXEC_TIMEOUT=${CODE_EXEC_TIMEOUT:-120}
+      - CPU_LIMIT=${CPU_LIMIT:-0.5}
+      - WORKSPACE_SIZE_LIMIT=${WORKSPACE_SIZE_LIMIT:-104857600}
+      - SESSION_MAX_AGE_HOURS=${SESSION_MAX_AGE_HOURS:-24}
+      - CLEANUP_INTERVAL_MINUTES=${CLEANUP_INTERVAL_MINUTES:-60}
+      - MAX_UPLOAD_SIZE=${MAX_UPLOAD_SIZE:-52428800}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3080,http://localhost:3000}
+      - SANDBOX_IMAGE=code-sandbox:latest
+    volumes:
+      # Mount Docker socket for spawning sandbox containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Workspace directory - MUST be a host path (not named volume)
+      # because sandbox containers need to access it from the host
+      - /tmp/code_command:/tmp/code_command
+      # Shared assets (icons, templates, helpers)
+      - ./shared_assets:/app/shared_assets:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8095/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+# Note: The sandbox image must be built separately:
+#   docker build -t code-sandbox:latest .
+#
+# This compose file builds and runs the API server.
+# Create Dockerfile.api for the API server container.
